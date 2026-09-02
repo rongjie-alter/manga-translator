@@ -1,13 +1,16 @@
-"""Mock OpenAI-compatible vision endpoint for exercising the translation pipeline.
+"""Mock vision endpoint for exercising the translation pipeline.
 
-Implements just enough of the API for the web app: chat completions with image parts,
-a model list, CORS preflight, structured JSON output, and a usage block. The point is
-the failure modes -- rate limits, transient errors, dropped pages, truncated output,
-safety blocks -- which are hard to trigger on purpose against a real endpoint.
+Speaks both request shapes the app can send: plain OpenAI-compatible chat completions,
+and Gemini's native `:generateContent` API. Implements just enough of each for the web
+app: image parts, a model list, CORS preflight, structured JSON output, and a usage
+block. The point is the failure modes -- rate limits, transient errors, dropped pages,
+truncated output, safety blocks -- which are hard to trigger on purpose against a real
+endpoint.
 
     py mock_server.py --port 8787 --rpm 6 --truncate 0.2 --block-rate 0.1 --seed 1
 
-Then add http://localhost:8787/v1 as an endpoint in the app's settings.
+Then add an endpoint in the app's settings: `http://localhost:8787/v1` with kind
+`openai`, or `http://localhost:8787/v1beta` with kind `gemini`.
 
 The app sends one user message per batch, alternating a text part that marks each page
 
@@ -34,6 +37,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PAGE_MARKER = re.compile(r"^\s*\[page (\d+)\]\s*(.+?)\s*$", re.MULTILINE)
+NATIVE_MODEL_PATH = re.compile(r"/models/([^:/]+):generateContent$")
 
 MODEL_ID = "mock-translate-1"
 
@@ -144,6 +148,62 @@ def extract_pages(messages):
   return pages, images
 
 
+def extract_pages_native(contents):
+  """Pull `[page N] file` markers and count inline images from native `contents`."""
+  pages = []
+  images = 0
+  for c in contents:
+    if not isinstance(c, dict) or c.get("role") != "user":
+      continue
+    for part in c.get("parts", []):
+      if not isinstance(part, dict):
+        continue
+      if "inlineData" in part:
+        images += 1
+      elif isinstance(part.get("text"), str):
+        for num, name in PAGE_MARKER.findall(part["text"]):
+          pages.append({"page": int(num), "file": name})
+  return pages, images
+
+
+def openai_response(model_id, content, finish_reason, prompt_tokens, completion_tokens,
+                     reasoning=None, reasoning_tokens=0):
+  message = {"role": "assistant", "content": content}
+  usage = {
+    "prompt_tokens": prompt_tokens,
+    "completion_tokens": completion_tokens,
+    "total_tokens": prompt_tokens + completion_tokens,
+  }
+  if reasoning:
+    message["reasoning_content"] = reasoning
+    usage["completion_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
+    usage["total_tokens"] += reasoning_tokens
+  return {
+    "id": f"chatcmpl-mock-{random.randint(1000, 9999)}",
+    "object": "chat.completion",
+    "created": int(time.time()),
+    "model": model_id,
+    "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+    "usage": usage,
+  }
+
+
+def gemini_response(model_id, parts, finish_reason, prompt_tokens, completion_tokens):
+  """Native `generateContent` response shape."""
+  return {
+    "modelVersion": model_id,
+    "candidates": [{
+      "content": {"role": "model", "parts": parts},
+      "finishReason": finish_reason,
+    }],
+    "usageMetadata": {
+      "promptTokenCount": prompt_tokens,
+      "candidatesTokenCount": completion_tokens,
+      "totalTokenCount": prompt_tokens + completion_tokens,
+    },
+  }
+
+
 class Handler(BaseHTTPRequestHandler):
   protocol_version = "HTTP/1.1"
 
@@ -189,15 +249,26 @@ class Handler(BaseHTTPRequestHandler):
     self._error(404, f"no route for {self.path}", "invalid_request_error")
 
   def do_POST(self):
-    if not self.path.rstrip("/").endswith("/chat/completions"):
-      self._error(404, f"no route for {self.path}", "invalid_request_error")
+    path = self.path.rstrip("/")
+    if path.endswith("/chat/completions"):
+      self._handle_completion(native=False)
       return
+    match = NATIVE_MODEL_PATH.search(path)
+    if match:
+      self._handle_completion(native=True, model_id=match.group(1))
+      return
+    self._error(404, f"no route for {self.path}", "invalid_request_error")
 
+  def _handle_completion(self, native, model_id=MODEL_ID):
+    """Shared body for the OpenAI-compat `/chat/completions` route and the native
+    Gemini `:generateContent` route, so the same failure injection (rate limits,
+    truncation, safety blocks) exercises whichever request shape the app sends."""
     cfg = self.server.cfg
     length = int(self.headers.get("Content-Length", 0))
     raw = self.rfile.read(length).decode("utf-8") if length else "{}"
 
-    if cfg.require_key and not self.headers.get("Authorization"):
+    key_header = "x-goog-api-key" if native else "Authorization"
+    if cfg.require_key and not self.headers.get(key_header):
       self._error(401, "missing api key", "authentication_error")
       return
 
@@ -222,17 +293,24 @@ class Handler(BaseHTTPRequestHandler):
       self._error(400, f"bad json: {e}", "invalid_request_error")
       return
 
-    messages = req.get("messages", [])
-    system = "\n".join(
-      m.get("content", "") for m in messages
-      if m.get("role") == "system" and isinstance(m.get("content"), str)
-    )
+    if native:
+      system = "\n".join(p.get("text", "") for p in req.get("systemInstruction", {}).get("parts", []))
+      pages, image_count = extract_pages_native(req.get("contents", []))
+      wants_thoughts = req.get("generationConfig", {}).get("thinkingConfig", {}).get("includeThoughts")
+    else:
+      messages = req.get("messages", [])
+      system = "\n".join(
+        m.get("content", "") for m in messages
+        if m.get("role") == "system" and isinstance(m.get("content"), str)
+      )
+      pages, image_count = extract_pages(messages)
+      model_id = req.get("model", MODEL_ID)
+      wants_thoughts = req.get("extra_body", {}).get("google", {}).get("thinking_config", {}).get("include_thoughts")
+
     lang = detect_lang(system)
-    pages, image_count = extract_pages(messages)
 
     if not pages:
-      self._error(400, "no [page N] markers found in the user message",
-                  "invalid_request_error")
+      self._error(400, "no [page N] markers found in the request", "invalid_request_error")
       return
     if image_count < len(pages):
       self._error(400, f"{len(pages)} page markers but only {image_count} images",
@@ -246,22 +324,10 @@ class Handler(BaseHTTPRequestHandler):
     # shape the app has to distinguish from a merely empty page.
     if cfg.block_rate and random.random() < cfg.block_rate:
       prompt_tokens = count_tokens(system) + image_count * 1032
-      self._send(200, {
-        "id": f"chatcmpl-mock-{random.randint(1000, 9999)}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": req.get("model", MODEL_ID),
-        "choices": [{
-          "index": 0,
-          "message": {"role": "assistant", "content": ""},
-          "finish_reason": "content_filter",
-        }],
-        "usage": {
-          "prompt_tokens": prompt_tokens,
-          "completion_tokens": 0,
-          "total_tokens": prompt_tokens,
-        },
-      })
+      if native:
+        self._send(200, gemini_response(model_id, [], "SAFETY", prompt_tokens, 0))
+      else:
+        self._send(200, openai_response(model_id, "", "content_filter", prompt_tokens, 0))
       return
 
     kept = [p for p in pages
@@ -276,42 +342,34 @@ class Handler(BaseHTTPRequestHandler):
     }
     content = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    finish = "stop"
+    finish = "STOP" if native else "stop"
     if cfg.truncate and random.random() < cfg.truncate:
       # Cut somewhere in the back half, so at least one page usually survives and the
       # app's tolerant parser has something to salvage.
       cut = random.randint(len(content) // 2, max(len(content) // 2, len(content) - 1))
       content = content[:cut]
-      finish = "length"
+      finish = "MAX_TOKENS" if native else "length"
 
     prompt_tokens = count_tokens(system) + image_count * 1032
     completion_tokens = count_tokens(content)
 
-    message = {"role": "assistant", "content": content}
-    usage = {
-      "prompt_tokens": prompt_tokens,
-      "completion_tokens": completion_tokens,
-      "total_tokens": prompt_tokens + completion_tokens,
-    }
-    # Mirrors Gemini's OpenAI-compat "include thoughts" response shape, so the
-    # per-call debug view can be exercised without a real Gemini key.
-    thinking_config = req.get("extra_body", {}).get("google", {}).get("thinking_config", {})
-    if thinking_config.get("include_thoughts"):
+    # Mirrors Gemini's "include thoughts" response shape, so the per-call debug view
+    # can be exercised without a real Gemini key.
+    reasoning = None
+    reasoning_tokens = 0
+    if wants_thoughts:
       reasoning_tokens = max(1, completion_tokens // 4)
-      message["reasoning_content"] = (
-        f"(mock reasoning) reading {len(pages)} page(s) into {lang}…"
-      )
-      usage["completion_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
-      usage["total_tokens"] += reasoning_tokens
+      reasoning = f"(mock reasoning) reading {len(pages)} page(s) into {lang}…"
 
-    self._send(200, {
-      "id": f"chatcmpl-mock-{random.randint(1000, 9999)}",
-      "object": "chat.completion",
-      "created": int(time.time()),
-      "model": req.get("model", MODEL_ID),
-      "choices": [{"index": 0, "message": message, "finish_reason": finish}],
-      "usage": usage,
-    })
+    if native:
+      parts = [{"text": content}]
+      if reasoning:
+        parts.append({"text": reasoning, "thought": True})
+      self._send(200, gemini_response(model_id, parts, finish, prompt_tokens,
+                                       completion_tokens + reasoning_tokens))
+    else:
+      self._send(200, openai_response(model_id, content, finish, prompt_tokens, completion_tokens,
+                                       reasoning, reasoning_tokens))
 
 
 def main():
@@ -330,7 +388,8 @@ def main():
   p.add_argument("--max-bytes", type=int, default=0,
                  help="reject requests larger than this with a 413 (0 = no limit)")
   p.add_argument("--seed", type=int, default=None, help="make the failure injection reproducible")
-  p.add_argument("--require-key", action="store_true", help="401 without an Authorization header")
+  p.add_argument("--require-key", action="store_true",
+                 help="401 without an Authorization or x-goog-api-key header")
   cfg = p.parse_args()
 
   if cfg.seed is not None:
@@ -339,7 +398,9 @@ def main():
   server = ThreadingHTTPServer((cfg.host, cfg.port), Handler)
   server.cfg = cfg
   server.limiter = Limiter(cfg.rpm)
-  print(f"[mock] listening on http://{cfg.host}:{cfg.port}/v1  model={MODEL_ID}")
+  print(f"[mock] listening on http://{cfg.host}:{cfg.port}  model={MODEL_ID}")
+  print(f"[mock] openai-compat: http://{cfg.host}:{cfg.port}/v1  "
+        f"gemini-native: http://{cfg.host}:{cfg.port}/v1beta")
   print(f"[mock] rpm={cfg.rpm or 'unlimited'} fail={cfg.fail_rate} "
         f"page-drop={cfg.page_drop_rate} truncate={cfg.truncate} block={cfg.block_rate} "
         f"latency={cfg.latency_ms}ms")

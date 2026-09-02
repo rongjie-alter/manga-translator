@@ -48,7 +48,8 @@ export async function chat(
   body: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<ChatResult> {
-  const url = endpoint.baseUrl.replace(/\/+$/, '') + '/chat/completions'
+  const isGemini = endpoint.kind === 'gemini'
+  const url = isGemini ? geminiUrl(endpoint) : endpoint.baseUrl.replace(/\/+$/, '') + '/chat/completions'
 
   let response: Response
   try {
@@ -56,7 +57,11 @@ export async function chat(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(endpoint.apiKey ? { Authorization: 'Bearer ' + endpoint.apiKey } : {}),
+        ...(endpoint.apiKey
+          ? isGemini
+            ? { 'x-goog-api-key': endpoint.apiKey }
+            : { Authorization: 'Bearer ' + endpoint.apiKey }
+          : {}),
       },
       body: JSON.stringify(body),
       signal: signal ?? null,
@@ -72,7 +77,18 @@ export async function chat(
   if (!response.ok) throw await errorFromResponse(response, url)
 
   const json = (await response.json().catch(() => null)) as unknown
-  return readChatResult(json)
+  return isGemini ? readGeminiResult(json) : readChatResult(json)
+}
+
+/**
+ * Native endpoint, not Google AI Studio's OpenAI-compatibility shim -- the shim drops
+ * `safety_settings`, so a request built for it never actually reaches Gemini with its
+ * filters off. A trailing `/openai` is stripped so a `baseUrl` saved before this change
+ * keeps working without a manual settings edit.
+ */
+function geminiUrl(endpoint: Endpoint): string {
+  const base = endpoint.baseUrl.replace(/\/+$/, '').replace(/\/openai$/i, '')
+  return base + '/models/' + encodeURIComponent(endpoint.model) + ':generateContent'
 }
 
 async function errorFromResponse(response: Response, url: string): Promise<ApiError> {
@@ -148,6 +164,49 @@ function readChatResult(json: unknown): ChatResult {
     promptTokens: num(usage['prompt_tokens']),
     completionTokens: num(usage['completion_tokens']),
     reasoning: typeof reasoning === 'string' && reasoning !== '' ? reasoning : null,
+  }
+}
+
+function readGeminiResult(json: unknown): ChatResult {
+  if (typeof json !== 'object' || json === null) {
+    throw new ApiError('provider returned a body that was not JSON', 'server')
+  }
+  const o = json as Record<string, unknown>
+  const candidates = Array.isArray(o['candidates']) ? o['candidates'] : []
+  const usage = (o['usageMetadata'] ?? {}) as Record<string, unknown>
+  const model = str(o['modelVersion'])
+  const promptTokens = num(usage['promptTokenCount'])
+  const completionTokens = num(usage['candidatesTokenCount'])
+
+  if (candidates.length === 0) {
+    // A prompt-level block drops `candidates` entirely (reported in `promptFeedback`
+    // instead), mirroring the OpenAI-compat empty-`choices` case above.
+    return { content: '', finishReason: 'content_filter', model, promptTokens, completionTokens, reasoning: null }
+  }
+
+  const candidate = candidates[0] as Record<string, unknown>
+  const candidateContent = (candidate['content'] ?? {}) as Record<string, unknown>
+  const parts = Array.isArray(candidateContent['parts']) ? candidateContent['parts'] : []
+
+  let content = ''
+  let reasoning = ''
+  for (const raw of parts) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const part = raw as Record<string, unknown>
+    const text = typeof part['text'] === 'string' ? part['text'] : ''
+    if (part['thought'] === true) reasoning += text
+    else content += text
+  }
+
+  return {
+    content,
+    // Gemini's `SAFETY`/`BLOCKLIST`/`PROHIBITED_CONTENT` lowercase to exactly the
+    // strings `parseResponse` already treats as blocked.
+    finishReason: str(candidate['finishReason']).toLowerCase(),
+    model,
+    promptTokens,
+    completionTokens,
+    reasoning: reasoning !== '' ? reasoning : null,
   }
 }
 

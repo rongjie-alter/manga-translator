@@ -37,7 +37,11 @@ const SAFETY_SETTINGS = [
 ].map((category) => ({ category, threshold: 'OFF' }))
 
 export function buildRequestBody(opts: BuildRequestOptions): Record<string, unknown> {
-  const { endpoint, systemPrompt, pages, includeThoughts } = opts
+  return opts.endpoint.kind === 'gemini' ? buildGeminiRequestBody(opts) : buildOpenAiRequestBody(opts)
+}
+
+function buildOpenAiRequestBody(opts: BuildRequestOptions): Record<string, unknown> {
+  const { endpoint, systemPrompt, pages } = opts
 
   const content: ContentPart[] = []
   pages.forEach((page, i) => {
@@ -60,13 +64,46 @@ export function buildRequestBody(opts: BuildRequestOptions): Record<string, unkn
     }
   }
 
-  if (endpoint.kind === 'gemini') {
-    const google: Record<string, unknown> = { safety_settings: SAFETY_SETTINGS }
-    if (includeThoughts) google['thinking_config'] = { include_thoughts: true }
-    body['extra_body'] = { google }
+  return body
+}
+
+/**
+ * Native Generative Language API request, used instead of Google AI Studio's
+ * OpenAI-compatibility shim -- the shim silently drops `safety_settings`, so a request
+ * built for it never actually turns Gemini's filters off. `safetySettings` here is a
+ * real, documented top-level field.
+ */
+function buildGeminiRequestBody(opts: BuildRequestOptions): Record<string, unknown> {
+  const { pages, systemPrompt, includeThoughts, endpoint } = opts
+
+  const parts: Record<string, unknown>[] = []
+  pages.forEach((page, i) => {
+    parts.push({ text: pageMarker(i + 1, page.file) })
+    parts.push({ inlineData: dataUrlToInlineData(page.dataUrl) })
+  })
+
+  const generationConfig: Record<string, unknown> = {}
+  if (endpoint.structuredOutput) {
+    generationConfig['responseMimeType'] = 'application/json'
+    generationConfig['responseSchema'] = RESPONSE_JSON_SCHEMA
   }
+  if (includeThoughts) generationConfig['thinkingConfig'] = { includeThoughts: true }
+
+  const body: Record<string, unknown> = {
+    contents: [{ role: 'user', parts }],
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    safetySettings: SAFETY_SETTINGS,
+  }
+  if (Object.keys(generationConfig).length > 0) body['generationConfig'] = generationConfig
 
   return body
+}
+
+/** Splits a `data:<mime>;base64,<data>` URL into Gemini's `inlineData` shape. */
+function dataUrlToInlineData(dataUrl: string): { mimeType: string; data: string } {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl)
+  if (!match) throw new Error('expected a base64 data URL, got: ' + dataUrl.slice(0, 32))
+  return { mimeType: match[1]!, data: match[2]! }
 }
 
 /** Rough byte size of the serialised request, which is what a provider's size cap counts. */

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { ApiError, withRetry } from '../api/client'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiError, chat, withRetry } from '../api/client'
+import type { Endpoint } from '../state/settings'
 
 /** Collects the delays `withRetry` asks for, without ever really waiting. */
 function recorder() {
@@ -83,6 +84,85 @@ describe('withRetry', () => {
     await expect(withRetry(async () => 'ok', { signal: controller.signal })).rejects.toThrow(
       'cancelled',
     )
+  })
+})
+
+const geminiEndpoint: Endpoint = {
+  id: 'g',
+  name: 'g',
+  baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+  apiKey: 'test-key',
+  model: 'gemini-x',
+  kind: 'gemini',
+  structuredOutput: false,
+}
+
+function stubFetch(response: unknown) {
+  const fn = vi.fn(async () => new Response(JSON.stringify(response), { status: 200 }))
+  vi.stubGlobal('fetch', fn)
+  return fn
+}
+
+describe('chat (gemini)', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('calls the native generateContent endpoint with the api key as a header', async () => {
+    const fetchMock = stubFetch({
+      candidates: [{ content: { parts: [{ text: 'hi' }] }, finishReason: 'STOP' }],
+      usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1 },
+      modelVersion: 'gemini-x-001',
+    })
+
+    const result = await chat(geminiEndpoint, { contents: [] })
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-x:generateContent')
+    expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe('test-key')
+    expect(init.headers).not.toHaveProperty('Authorization')
+    expect(result).toEqual({
+      content: 'hi',
+      finishReason: 'stop',
+      model: 'gemini-x-001',
+      promptTokens: 3,
+      completionTokens: 1,
+      reasoning: null,
+    })
+  })
+
+  it('strips a trailing /openai from a baseUrl saved before the native switch', async () => {
+    const fetchMock = stubFetch({ candidates: [{ content: { parts: [] }, finishReason: 'STOP' }] })
+    await chat({ ...geminiEndpoint, baseUrl: geminiEndpoint.baseUrl + '/openai/' }, {})
+    const [url] = fetchMock.mock.calls[0] as unknown as [string]
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-x:generateContent')
+  })
+
+  it('treats an empty candidates array as a prompt-level block', async () => {
+    stubFetch({ promptFeedback: { blockReason: 'SAFETY' }, usageMetadata: { promptTokenCount: 5 } })
+    const result = await chat(geminiEndpoint, {})
+    expect(result.content).toBe('')
+    expect(result.finishReason).toBe('content_filter')
+    expect(result.promptTokens).toBe(5)
+  })
+
+  it('separates thought parts into reasoning and lowercases the finish reason', async () => {
+    stubFetch({
+      candidates: [
+        {
+          content: {
+            parts: [
+              { text: 'thinking...', thought: true },
+              { text: 'the answer' },
+            ],
+          },
+          finishReason: 'SAFETY',
+        },
+      ],
+      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 2 },
+    })
+    const result = await chat(geminiEndpoint, {})
+    expect(result.content).toBe('the answer')
+    expect(result.reasoning).toBe('thinking...')
+    expect(result.finishReason).toBe('safety')
   })
 })
 

@@ -9,16 +9,16 @@ import { DEFAULT_PROMPT_TEMPLATE } from '../api/prompt'
 import type { ReadingDirection, SourceLang, TargetLang } from './schema'
 
 /**
- * Providers differ in the bits that matter here: Gemini accepts safety settings and
- * thinking config under `extra_body.google`, plain OpenAI-compatible servers do not and
- * may reject unknown fields.
+ * `gemini` calls Google's native Generative Language REST API (`:generateContent`),
+ * not an OpenAI-compatible endpoint -- that is what lets safety settings and thinking
+ * config actually take effect. `openai` speaks the plain OpenAI chat-completions shape.
  */
 export type EndpointKind = 'gemini' | 'openai'
 
 export interface Endpoint {
   id: string
   name: string
-  /** Base URL including the version segment, e.g. `https://.../v1beta/openai`. */
+  /** Base URL including the version segment, e.g. `https://.../v1beta`. */
   baseUrl: string
   apiKey: string
   model: string
@@ -41,7 +41,7 @@ export interface AppSettings {
   includeThoughts: boolean
 }
 
-export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai'
+export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
 
 export function defaultSettings(): AppSettings {
   return {
