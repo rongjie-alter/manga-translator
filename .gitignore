@@ -1,2 +1,4 @@
+dist/
+test-img/
 node_modules/
 *.pdf
