@@ -380,6 +380,8 @@ label {
 }
 
 .page-list {
+  position: sticky;
+  top: 70px;
   max-height: calc(100vh - 140px);
   overflow: auto;
   border: 1px solid var(--line);
