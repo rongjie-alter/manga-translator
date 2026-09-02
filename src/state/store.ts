@@ -133,7 +133,8 @@ export async function openSource(source: ProjectSource): Promise<void> {
   }
 }
 
-export function closeProject(): void {
+export async function closeProject(): Promise<void> {
+  if (store.get().dirty) await saveNow()
   pageSources = new Map()
   store.set({ source: null, project: null, report: null, dirty: false, run: idleRun() })
 }

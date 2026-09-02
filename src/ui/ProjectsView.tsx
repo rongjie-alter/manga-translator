@@ -81,7 +81,7 @@ export function ProjectsView() {
               class="small"
               onClick={async () => {
                 ;(await import('../fs/dev-source')).resetDevSource()
-                closeProject()
+                await closeProject()
               }}
             >
               Reset sample
@@ -102,7 +102,7 @@ export function ProjectsView() {
             <button onClick={() => navigate('scan')}>Scan</button>
             <button onClick={() => navigate('translate')}>Translate</button>
             <button onClick={() => navigate('read')}>Read</button>
-            <button class="danger" onClick={closeProject}>
+            <button class="danger" onClick={() => void closeProject()}>
               Close
             </button>
           </div>
