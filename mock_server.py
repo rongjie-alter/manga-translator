@@ -19,7 +19,7 @@ The app sends one user message per batch, alternating a text part that marks eac
 with the corresponding `image_url` part, and expects back a JSON object shaped like
 
     {"pages": [{"page": 3, "file": "nippon1-3.jpeg", "lines": [
-        {"id": 1, "kind": "dialogue", "speaker": "リナ", "original": "…", "translation": "…"}
+        {"id": 1, "kind": "dialogue", "original": "…", "translation": "…"}
      ]}],
      "glossary": [{"term": "リナ", "translation": "Rina", "note": "protagonist"}]}
 
@@ -43,16 +43,16 @@ MODEL_ID = "mock-translate-1"
 
 # Enough variety that batching, ordering and glossary merging are visibly exercised.
 SOURCE_LINES = [
-    ("dialogue", "リナ", "おはよう、今日もいい天気だね"),
-    ("dialogue", "ケンジ", "まったく、君はいつも遅刻ばかりだ"),
-    ("dialogue", "リナ", "そんなこと言われても困るよ！"),
-    ("narration", "", "その日、彼女はまだ何も知らなかった"),
-    ("sfx", "", "ドキドキ"),
-    ("sfx", "", "ガタン"),
-    ("dialogue", "ケンジ", "……まさか、本当にやるつもりか？"),
-    ("sign", "", "第一高等学校"),
-    ("narration", "", "三年前のあの夏を、僕はまだ覚えている"),
-    ("dialogue", "リナ", "待って！行かないで！"),
+    ("dialogue", "おはよう、今日もいい天気だね"),
+    ("dialogue", "まったく、君はいつも遅刻ばかりだ"),
+    ("dialogue", "そんなこと言われても困るよ！"),
+    ("narration", "その日、彼女はまだ何も知らなかった"),
+    ("sfx", "ドキドキ"),
+    ("sfx", "ガタン"),
+    ("dialogue", "……まさか、本当にやるつもりか？"),
+    ("sign", "第一高等学校"),
+    ("narration", "三年前のあの夏を、僕はまだ覚えている"),
+    ("dialogue", "待って！行かないで！"),
 ]
 
 GLOSSARY_POOL = [
@@ -111,11 +111,10 @@ def lines_for_page(file_name, lang):
   tag = LANG_TAG.get(lang, "TL")
   out = []
   for i in range(count):
-    kind, speaker, original = SOURCE_LINES[rng.randrange(len(SOURCE_LINES))]
+    kind, original = SOURCE_LINES[rng.randrange(len(SOURCE_LINES))]
     out.append({
       "id": i + 1,
       "kind": kind,
-      "speaker": speaker,
       "original": original,
       "translation": f"[{tag}] {file_name} line {i + 1}",
     })

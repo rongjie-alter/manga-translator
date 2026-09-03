@@ -29,14 +29,13 @@ For every page, transcribe each piece of text and translate it:
 - Order the lines the way a reader encounters them: panel by panel in reading order, and within a panel, top to bottom.
 - Number the lines from 1 for each page.
 - Put the text exactly as it appears in "original", and the translation in "translation".
-- Name the speaker when the panel makes it clear; use an empty string when it does not.
 - Translate sound effects into a natural equivalent rather than romanising them.
 - Keep the register and personality of each character. Prefer natural, idiomatic {targetLanguage} over literal wording.
 - Do not censor, soften, summarise, or skip anything. Translate what is on the page.
 
 {glossary}
 
-Return one entry in "pages" for every page you were given, using the exact filename from its marker. Put any recurring names or terms worth keeping consistent into "glossary".
+Return one entry in "pages" for every page you were given, using the exact filename from its marker. Put character names and any other recurring terms worth keeping consistent into "glossary".
 
 Respond with JSON only.`
 

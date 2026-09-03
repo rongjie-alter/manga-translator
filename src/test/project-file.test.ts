@@ -15,7 +15,6 @@ function translated(project: ProjectFile, file: string): ProjectFile {
               {
                 id: 1,
                 kind: 'dialogue' as const,
-                speaker: '',
                 original: 'あ',
                 translation: 'Ah',
                 edited: false,

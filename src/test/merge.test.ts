@@ -6,7 +6,6 @@ import type { GlossaryEntry, Line } from '../state/schema'
 const line = (over: Partial<Line> = {}): Line => ({
   id: 1,
   kind: 'dialogue',
-  speaker: '',
   original: 'あ',
   translation: 'Ah',
   edited: false,
@@ -17,7 +16,6 @@ const line = (over: Partial<Line> = {}): Line => ({
 const model = (over: Partial<ModelLine> = {}): ModelLine => ({
   id: 1,
   kind: 'dialogue',
-  speaker: 'リナ',
   original: 'あ！',
   translation: 'Ah!',
   ...over,
@@ -27,7 +25,7 @@ describe('mergeLines', () => {
   it('replaces untouched lines outright', () => {
     const { lines, editedTouched } = mergeLines([line()], [model()])
     expect(editedTouched).toBe(0)
-    expect(lines[0]).toMatchObject({ translation: 'Ah!', speaker: 'リナ', edited: false })
+    expect(lines[0]).toMatchObject({ translation: 'Ah!', edited: false })
   })
 
   it('keeps a hand-edited translation under the default policy', () => {

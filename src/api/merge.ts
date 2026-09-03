@@ -46,7 +46,6 @@ export function mergeLines(
     const base: Line = {
       id: model.id,
       kind: model.kind,
-      speaker: model.speaker,
       original: model.original,
       translation: model.translation,
       edited: false,

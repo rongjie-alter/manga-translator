@@ -136,7 +136,6 @@ function LineEditor({ file, line }: { file: string; line: Line }) {
       <div class="head">
         <span class="tag">{line.kind}</span>
         <span>#{line.id}</span>
-        {line.speaker && <strong style="color:var(--accent)">{line.speaker}</strong>}
         <span class="spacer" style="flex:1" />
         {line.edited && (
           <button

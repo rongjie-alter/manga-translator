@@ -44,7 +44,7 @@ function reply(files: string[], glossary: { term: string; translation: string; n
         page: i + 1,
         file,
         lines: [
-          { id: 1, kind: 'dialogue', speaker: 'リナ', original: 'あ', translation: 'Ah (' + file + ')' },
+          { id: 1, kind: 'dialogue', original: 'あ', translation: 'Ah (' + file + ')' },
         ],
       })),
       glossary,

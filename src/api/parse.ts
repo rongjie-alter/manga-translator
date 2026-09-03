@@ -173,7 +173,6 @@ function coerceLines(raw: unknown[]): ModelLine[] {
         typeof kind === 'string' && (LINE_KINDS as readonly string[]).includes(kind)
           ? (kind as LineKind)
           : 'dialogue',
-      speaker: typeof o['speaker'] === 'string' ? o['speaker'] : '',
       original,
       translation,
     })

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { RESPONSE_JSON_SCHEMA } from '../api/contract'
 import { buildRequestBody, requestSizeBytes } from '../api/request'
 import type { Endpoint } from '../state/settings'
 
@@ -75,6 +76,26 @@ describe('buildRequestBody', () => {
       includeThoughts: false,
     })
     expect(body).not.toHaveProperty('generationConfig')
+  })
+})
+
+describe('RESPONSE_JSON_SCHEMA', () => {
+  // OpenAI's `strict: true` rejects a schema whose `required` is not exactly its property
+  // keys, so a field removed from one and not the other is a 400 on every call rather
+  // than a compile error. Checked here once, for every field that comes and goes.
+  const objects = (node: unknown): Record<string, unknown>[] => {
+    if (typeof node !== 'object' || node === null) return []
+    const o = node as Record<string, unknown>
+    const nested = Object.values(o).flatMap(objects)
+    return o['type'] === 'object' ? [o, ...nested] : nested
+  }
+
+  it('lists every property as required, at every level', () => {
+    const schemas = objects(RESPONSE_JSON_SCHEMA)
+    expect(schemas.length).toBeGreaterThan(0)
+    for (const schema of schemas) {
+      expect(schema['required']).toEqual(Object.keys(schema['properties'] as object))
+    }
   })
 })
 

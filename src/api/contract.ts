@@ -3,7 +3,10 @@
  * hand to providers that support structured output.
  *
  * Deliberately flat. Every field the model has to invent is a field it can get wrong,
- * and the reader only needs reading order, so there are no coordinates here.
+ * and the reader only needs reading order, so there are no coordinates here. A per-line
+ * `speaker` was tried and dropped for the same reason: attribution came back right about
+ * half the time, and a wrong name sits immediately before the translation it is meant to
+ * inform. Names that need to stay consistent travel in the glossary instead.
  */
 
 import type { LineKind } from '../state/schema'
@@ -11,7 +14,6 @@ import type { LineKind } from '../state/schema'
 export interface ModelLine {
   id: number
   kind: LineKind
-  speaker: string
   original: string
   translation: string
 }
@@ -57,11 +59,10 @@ export const RESPONSE_JSON_SCHEMA = {
               properties: {
                 id: { type: 'integer' },
                 kind: { type: 'string', enum: ['dialogue', 'narration', 'sfx', 'sign'] },
-                speaker: { type: 'string' },
                 original: { type: 'string' },
                 translation: { type: 'string' },
               },
-              required: ['id', 'kind', 'speaker', 'original', 'translation'],
+              required: ['id', 'kind', 'original', 'translation'],
             },
           },
         },

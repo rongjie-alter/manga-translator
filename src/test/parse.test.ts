@@ -7,11 +7,11 @@ const good = {
       page: 1,
       file: 'a.jpg',
       lines: [
-        { id: 1, kind: 'dialogue', speaker: 'リナ', original: 'あ', translation: 'Ah' },
-        { id: 2, kind: 'sfx', speaker: '', original: 'ドン', translation: 'THUD' },
+        { id: 1, kind: 'dialogue', original: 'あ', translation: 'Ah' },
+        { id: 2, kind: 'sfx', original: 'ドン', translation: 'THUD' },
       ],
     },
-    { page: 2, file: 'b.jpg', lines: [{ id: 1, kind: 'narration', speaker: '', original: 'い', translation: 'And so' }] },
+    { page: 2, file: 'b.jpg', lines: [{ id: 1, kind: 'narration', original: 'い', translation: 'And so' }] },
   ],
   glossary: [{ term: 'リナ', translation: 'Rina', note: 'lead' }],
 }
@@ -34,10 +34,25 @@ describe('parseResponse', () => {
     expect(r.pages).toHaveLength(2)
   })
 
+  it('ignores fields the contract no longer defines', () => {
+    // A prompt template cached in localStorage still asks for a speaker, so models and
+    // the mock server both keep sending one. It must not survive into a Line.
+    const r = parse(
+      JSON.stringify({
+        pages: [{ page: 1, file: 'a.jpg', lines: [{ id: 1, kind: 'dialogue', speaker: 'リナ', original: 'あ', translation: 'Ah' }] }],
+        glossary: [],
+      }),
+    )
+    expect(r.error).toBeNull()
+    expect(r.pages[0]!.lines[0]).toEqual({ id: 1, kind: 'dialogue', original: 'あ', translation: 'Ah' })
+  })
+
   it('salvages whole pages from a response cut off mid-array', () => {
     const full = JSON.stringify(good, null, 2)
-    // Cut inside the second page's lines, after the first page has closed.
-    const cut = full.slice(0, full.indexOf('"b.jpg"') + 30)
+    // Cut inside the second page's first translation, after the first page has closed.
+    // Anchored on the text rather than a byte offset, so changing the line shape does
+    // not silently move the cut somewhere that no longer tests anything.
+    const cut = full.slice(0, full.indexOf('And so'))
     const r = parse(cut, 'length')
     expect(r.recovered).toBe(true)
     expect(r.blocked).toBe(false)
@@ -72,7 +87,7 @@ describe('parseResponse', () => {
         {
           page: 1,
           file: 'a.jpg',
-          lines: [{ id: 1, kind: 'sign', speaker: '', original: '{変}', translation: 'he said "}" and [left]' }],
+          lines: [{ id: 1, kind: 'sign', original: '{変}', translation: 'he said "}" and [left]' }],
         },
       ],
       glossary: [],

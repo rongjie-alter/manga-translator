@@ -21,7 +21,6 @@ describe('migrate', () => {
       {
         id: 1,
         kind: 'dialogue',
-        speaker: 'リナ',
         original: 'こんにちは',
         translation: 'Hello',
         edited: true,
@@ -49,6 +48,20 @@ describe('migrate', () => {
     const p = migrate({ pages: [{ file: 'a.png', lines: [{ translation: 'hi' }] }] })
     expect(p.pages[0]!.status).toBe('translated')
     expect(p.pages[0]!.lines[0]).toMatchObject({ id: 1, kind: 'dialogue', translation: 'hi' })
+  })
+
+  it('strips a speaker field written by an older build', () => {
+    const p = migrate({
+      pages: [{ file: 'a.png', lines: [{ id: 1, speaker: 'リナ', original: 'あ', translation: 'Ah' }] }],
+    })
+    expect(p.pages[0]!.lines[0]).toEqual({
+      id: 1,
+      kind: 'dialogue',
+      original: 'あ',
+      translation: 'Ah',
+      edited: false,
+      previousTranslation: null,
+    })
   })
 
   it('drops junk rather than propagating it', () => {

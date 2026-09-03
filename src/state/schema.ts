@@ -44,8 +44,6 @@ export interface Line {
   /** Stable within a page. Assigned by the model in reading order. */
   id: number
   kind: LineKind
-  /** Who is speaking, when the model can tell. Empty string when it cannot. */
-  speaker: string
   original: string
   translation: string
   /** Set once a human touches `translation`; makes the line sticky across retranslation. */
@@ -243,13 +241,20 @@ function migratePage(raw: unknown, i: number): Page {
   }
 }
 
+/**
+ * `speaker` was dropped after v1; builds before 2026-09 wrote one per line. It is
+ * deliberately not read here -- reconstructing from known keys normalises it away, so an
+ * old file opens fine and the next save simply stops writing it. No version bump: an
+ * older build reading a file without it falls back to its own default and nothing
+ * downstream notices, so tolerating it in both directions is not worth spending the
+ * version number on.
+ */
 function migrateLine(raw: unknown, i: number): Line {
   const o = asRecord(raw)
   const previous = o['previousTranslation']
   return {
     id: clampInt(o['id'], 0, Number.MAX_SAFE_INTEGER, i + 1),
     kind: oneOf(o['kind'], ['dialogue', 'narration', 'sfx', 'sign'], 'dialogue'),
-    speaker: str(o['speaker'], ''),
     original: str(o['original'], ''),
     translation: str(o['translation'], ''),
     edited: o['edited'] === true,

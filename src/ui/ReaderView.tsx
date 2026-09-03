@@ -119,10 +119,5 @@ function Spread({
 
 function ReaderLine({ line }: { line: Line }) {
   if (line.kind === 'sfx') return <span class="sfx">{line.translation}</span>
-  return (
-    <span>
-      {line.speaker && <span class="speaker">{line.speaker}: </span>}
-      {line.translation}
-    </span>
-  )
+  return <span>{line.translation}</span>
 }

@@ -524,11 +524,6 @@ label {
   gap: 8px;
 }
 
-.spread .panel .speaker {
-  color: var(--accent);
-  font-size: 12px;
-}
-
 .spread .panel .sfx {
   color: var(--muted);
   font-style: italic;
