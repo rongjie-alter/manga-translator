@@ -1,25 +1,47 @@
 /** Small pieces shared by more than one view. */
 
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import type { Page, PageStatus } from '../state/schema'
 import { hasPageBlob, loadPageBlob } from '../state/store'
+import { observeOnce } from './visibility'
 
 /**
- * Lazily turn a page file into an object URL, and revoke it on unmount.
+ * Turn a page file into an object URL once it is nearly on screen, and revoke it on
+ * unmount.
  *
- * Pages are loaded one at a time on demand rather than all up front: a 200-page project
- * held in memory as blobs is hundreds of megabytes, and the browser only ever shows a
- * handful at once.
+ * The visibility gate is the point. `content-visibility: auto` on the card skips
+ * layout and paint for offscreen pages, and `loading="lazy"` defers the network for
+ * an ordinary URL -- but neither stops this component from mounting and reading the
+ * page, and by the time the `<img>` exists the bytes are already in memory. Without
+ * the gate, opening a 200-page project reads all 200 pages at once; when the pages
+ * come from a PDF, that renders the entire book to look at a grid of thumbnails.
  */
 export function PageImage({ file, alt }: { file: string; alt?: string }) {
+  const target = useRef<Element | null>(null)
+  // A callback ref, because the observed node changes element type as the image loads.
+  const attach = (el: Element | null) => {
+    target.current = el
+  }
+  const [visible, setVisible] = useState(false)
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
+
+  useEffect(() => {
+    setVisible(false)
+    const el = target.current
+    if (!el) {
+      setVisible(true)
+      return
+    }
+    return observeOnce(el, () => setVisible(true))
+  }, [file])
 
   useEffect(() => {
     let revoked = false
     let objectUrl = ''
     setUrl(null)
     setError(false)
+    if (!visible) return
     if (!hasPageBlob(file)) {
       setError(true)
       return
@@ -35,11 +57,17 @@ export function PageImage({ file, alt }: { file: string; alt?: string }) {
       revoked = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [file])
+  }, [file, visible])
 
-  if (error) return <div class="empty">{file} could not be loaded</div>
-  if (!url) return <div class="empty" style="min-height:120px" />
-  return <img src={url} alt={alt ?? file} loading="lazy" />
+  if (error) {
+    return (
+      <div class="empty" ref={attach}>
+        {file} could not be loaded
+      </div>
+    )
+  }
+  if (!url) return <div class="empty page-placeholder" ref={attach} />
+  return <img src={url} alt={alt ?? file} loading="lazy" ref={attach} />
 }
 
 export function StatusDot({ status }: { status: PageStatus }) {

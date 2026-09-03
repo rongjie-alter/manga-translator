@@ -61,9 +61,13 @@ export function App() {
         {state.error && (
           <Banner kind="error">
             {state.error}{' '}
-            <button class="small" onClick={() => void saveNow()}>
-              retry save
-            </button>
+            {/* Only a project that is open can have a save to retry; an open that
+                failed leaves no project and nothing to write. */}
+            {hasProject && (
+              <button class="small" onClick={() => void saveNow()}>
+                retry save
+              </button>
+            )}
           </Banner>
         )}
         {effective === 'projects' && <ProjectsView />}

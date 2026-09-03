@@ -115,6 +115,28 @@ export async function prepareImage(
   }
 }
 
+/**
+ * Re-encode any decodable image to JPEG, at full size.
+ *
+ * Used when an incoming image is in a format the project cannot store -- TIFF, HEIC,
+ * SVG -- since `isImageName` decides what a later directory listing will even see, so
+ * a file written with an unrecognised extension would silently vanish on the next
+ * rescan. Full size, not `maxEdge`: this is the stored page, and downscaling for
+ * upload is `prepareImage`'s job.
+ */
+export async function reencodeToJpeg(blob: Blob, quality = DEFAULT_QUALITY): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob)
+  try {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('could not get a 2d context to re-encode the image')
+    ctx.drawImage(bitmap, 0, 0)
+    return await canvas.convertToBlob({ type: 'image/jpeg', quality })
+  } finally {
+    bitmap.close()
+  }
+}
+
 function isJpeg(file: File | Blob): boolean {
   return file.type === 'image/jpeg' || file.type === 'image/jpg'
 }

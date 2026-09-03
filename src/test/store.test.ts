@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  addImages,
+  canAddImages,
   cancelRun,
   closeProject,
+  hasPageBlob,
   installUnloadGuard,
   openSource,
   saveNow,
@@ -102,6 +105,7 @@ describe('openSource / closeProject', () => {
       project: p,
       report: { added: ['a.jpg'], removed: [], changed: [] },
       created: true,
+      pages: [],
     })
     const source = fakeSource()
 
@@ -120,6 +124,7 @@ describe('openSource / closeProject', () => {
       project: p,
       report: { added: [], removed: [], changed: [] },
       created: false,
+      pages: [],
     })
 
     await openSource(fakeSource())
@@ -141,6 +146,7 @@ describe('openSource / closeProject', () => {
       project: project(),
       report: { added: [], removed: [], changed: [] },
       created: false,
+      pages: [],
     })
     vi.mocked(saveProject).mockImplementation(async (_source, p) => p)
     await openSource(fakeSource())
@@ -159,6 +165,7 @@ describe('openSource / closeProject', () => {
       project: project(),
       report: { added: [], removed: [], changed: [] },
       created: false,
+      pages: [],
     })
     await openSource(fakeSource())
 
@@ -174,6 +181,7 @@ describe('updateProject / autosave', () => {
       project: project(),
       report: { added: [], removed: [], changed: [] },
       created: false,
+      pages: [],
     })
     await openSource(fakeSource())
   })
@@ -261,6 +269,7 @@ describe('updateProject / autosave', () => {
       project: project(),
       report: { added: [], removed: [], changed: [] },
       created: false,
+      pages: [],
     })
     await openSource(fakeSource({ writable: false }))
     updateProject((p) => ({ ...p, glossary: [{ term: 'x', translation: 'y', note: '', locked: false }] }))
@@ -570,5 +579,226 @@ describe('installUnloadGuard', () => {
     const event = dispatchBeforeUnload()
 
     expect(event.defaultPrevented).toBe(false)
+  })
+})
+
+describe('addImages', () => {
+  const png = (label = 'x') => new Blob([label], { type: 'image/png' })
+
+  /** A source that records what it was asked to write. */
+  function addableSource(overrides: Partial<ProjectSource> = {}) {
+    const written: { name: string; blob: Blob }[] = []
+    const source = fakeSource({
+      addImage: async (name, blob) => {
+        written.push({ name, blob })
+        return { name, page: { file: name, getFile: async () => new File([blob], name) } }
+      },
+      ...overrides,
+    })
+    return { source, written }
+  }
+
+  async function openWith(source: ProjectSource, files = ['p001.jpg', 'p002.jpg']) {
+    vi.mocked(loadProject).mockResolvedValue({
+      project: project(files),
+      report: { added: [], removed: [], changed: [] },
+      created: false,
+      pages: [],
+    })
+    vi.mocked(saveProject).mockImplementation(async (_s, p) => p)
+    await openSource(source)
+  }
+
+  it('appends the new pages at the end, numbered contiguously', async () => {
+    const { source } = addableSource()
+    await openWith(source)
+
+    const result = await addImages([png('a'), png('b')])
+
+    expect(result.added).toEqual(['p003.png', 'p004.png'])
+    const pages = store.get().project!.pages
+    expect(pages.map((p) => p.file)).toEqual(['p001.jpg', 'p002.jpg', 'p003.png', 'p004.png'])
+    expect(pages.map((p) => p.index)).toEqual([0, 1, 2, 3])
+  })
+
+  it('adds them as pending, with a hash of the bytes written', async () => {
+    const { source } = addableSource()
+    await openWith(source)
+
+    await addImages([png()])
+
+    const added = store.get().project!.pages.at(-1)!
+    expect(added.status).toBe('pending')
+    expect(added.lines).toEqual([])
+    expect(added.hash).toMatch(/^[0-9a-f]{32}$/)
+  })
+
+  it('registers the page so its image can be shown straight away', async () => {
+    const { source } = addableSource()
+    await openWith(source)
+
+    const { added } = await addImages([png()])
+
+    expect(hasPageBlob(added[0]!)).toBe(true)
+  })
+
+  it('writes the file before appending the page', async () => {
+    const order: string[] = []
+    const { source } = addableSource({
+      addImage: async (name, blob) => {
+        order.push('write')
+        return { name, page: { file: name, getFile: async () => new File([blob], name) } }
+      },
+    })
+    await openWith(source)
+    const unsubscribe = store.subscribe(() => {
+      if (store.get().project!.pages.length > 2 && !order.includes('append')) order.push('append')
+    })
+
+    await addImages([png()])
+    unsubscribe()
+
+    expect(order).toEqual(['write', 'append'])
+  })
+
+  it('honours the name the source chose, not the one requested', async () => {
+    const { source } = addableSource({
+      addImage: async (_name, blob) => ({
+        name: 'renamed-by-source.png',
+        page: { file: 'renamed-by-source.png', getFile: async () => new File([blob], 'r.png') },
+      }),
+    })
+    await openWith(source)
+
+    const result = await addImages([png()])
+
+    expect(result.added).toEqual(['renamed-by-source.png'])
+    expect(store.get().project!.pages.at(-1)!.file).toBe('renamed-by-source.png')
+  })
+
+  it('is a clean no-op for a source that cannot accept pages', async () => {
+    await openWith(fakeSource())
+
+    const result = await addImages([png()])
+
+    expect(result).toEqual({ added: [], skipped: [] })
+    expect(store.get().project!.pages).toHaveLength(2)
+    expect(store.get().dirty).toBe(false)
+  })
+
+  it('appends nothing when the write fails, and reports why', async () => {
+    const { source } = addableSource({
+      addImage: async () => {
+        throw new Error('disk full')
+      },
+    })
+    await openWith(source)
+
+    const result = await addImages([png()])
+
+    expect(result.added).toEqual([])
+    expect(result.skipped).toEqual([{ type: 'image/png', reason: 'disk full' }])
+    expect(store.get().project!.pages).toHaveLength(2)
+  })
+
+  it('keeps the pages that did write when one of a batch fails', async () => {
+    let calls = 0
+    const { source } = addableSource({
+      addImage: async (name, blob) => {
+        if (calls++ === 0) throw new Error('nope')
+        return { name, page: { file: name, getFile: async () => new File([blob], name) } }
+      },
+    })
+    await openWith(source)
+
+    const result = await addImages([png('a'), png('b')])
+
+    expect(result.added).toHaveLength(1)
+    expect(result.skipped).toHaveLength(1)
+    expect(store.get().project!.pages).toHaveLength(3)
+  })
+
+  it('gives concurrent calls distinct names instead of overwriting', async () => {
+    const { source, written } = addableSource()
+    await openWith(source)
+
+    await Promise.all([addImages([png('a')]), addImages([png('b')])])
+
+    const names = written.map((w) => w.name)
+    expect(new Set(names).size).toBe(2)
+    expect(store.get().project!.pages.map((p) => p.file)).toEqual([
+      'p001.jpg',
+      'p002.jpg',
+      'p003.png',
+      'p004.png',
+    ])
+  })
+
+  it('does not append twice if a rescan already discovered the file', async () => {
+    const { source } = addableSource({
+      addImage: async (name, blob) => {
+        // Stand in for a rescan landing between the write and the append.
+        updateProject((p) => ({
+          ...p,
+          pages: [...p.pages, { ...p.pages[0]!, file: name, index: p.pages.length }],
+        }))
+        return { name, page: { file: name, getFile: async () => new File([blob], name) } }
+      },
+    })
+    await openWith(source)
+
+    await addImages([png()])
+
+    const files = store.get().project!.pages.map((p) => p.file)
+    expect(files.filter((f) => f === 'p003.png')).toHaveLength(1)
+  })
+
+  it('persists the addition even when a save is already in flight', async () => {
+    const { source } = addableSource()
+    await openWith(source)
+    const slow = deferred<ProjectFile>()
+    vi.mocked(saveProject).mockReturnValueOnce(slow.promise)
+    updateProject((p) => ({ ...p, usage: { ...p.usage, calls: 1 } }))
+    await vi.advanceTimersByTimeAsync(800)
+
+    await addImages([png()])
+    slow.resolve(store.get().project!)
+    vi.mocked(saveProject).mockImplementation(async (_s, p) => p)
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect(store.get().project!.pages).toHaveLength(3)
+    expect(store.get().dirty).toBe(false)
+  })
+})
+
+describe('canAddImages', () => {
+  const loaded = () => ({
+    project: project(),
+    report: { added: [], removed: [], changed: [] },
+    created: false,
+    pages: [],
+  })
+
+  it('is false with no project open', () => {
+    expect(canAddImages()).toBe(false)
+  })
+
+  it('is false for a source that cannot accept pages', async () => {
+    vi.mocked(loadProject).mockResolvedValue(loaded())
+    await openSource(fakeSource())
+    expect(canAddImages()).toBe(false)
+  })
+
+  it('is true for a source that can', async () => {
+    vi.mocked(loadProject).mockResolvedValue(loaded())
+    await openSource(
+      fakeSource({
+        addImage: async (name) => ({
+          name,
+          page: { file: name, getFile: async () => new File([], name) },
+        }),
+      }),
+    )
+    expect(canAddImages()).toBe(true)
   })
 })

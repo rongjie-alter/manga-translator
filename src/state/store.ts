@@ -15,9 +15,11 @@ import {
   type RunDeps,
 } from '../api/batcher'
 import type { EditPolicy } from '../api/merge'
+import { planNames, toStorableImage } from '../fs/add-images'
+import { hashFile } from '../fs/images'
 import { loadProject, saveProject, type ReconcileReport } from '../fs/project-file'
 import type { PageSource, ProjectSource } from '../fs/source'
-import type { ProjectFile } from './schema'
+import { newPage, type ProjectFile } from './schema'
 import { activeEndpoint, loadSettings, saveSettings, type AppSettings } from './settings'
 
 class Store<T extends object> {
@@ -114,11 +116,12 @@ export function updateSettings(patch: Partial<AppSettings>): void {
 
 let pageSources = new Map<string, PageSource>()
 
-export async function openSource(source: ProjectSource): Promise<void> {
+/** Returns false when the project could not be opened; the reason is in `state.error`. */
+export async function openSource(source: ProjectSource): Promise<boolean> {
   const { settings } = store.get()
   store.set({ error: null })
   try {
-    const { project, report, created } = await loadProject(source, {
+    const { project, report, created, pages } = await loadProject(source, {
       sourceLang: settings.sourceLang,
       targetLang: settings.targetLang,
       readingDirection: settings.readingDirection,
@@ -126,28 +129,171 @@ export async function openSource(source: ProjectSource): Promise<void> {
       model: activeEndpoint(settings)?.model ?? '',
       batchSize: settings.batchSize,
     })
-    pageSources = new Map((await source.listPages()).map((p) => [p.file, p]))
+    pageSources = new Map(pages.map((p) => [p.file, p]))
     store.set({ source, project, report, dirty: created, run: idleRun() })
+    return true
   } catch (err) {
     store.set({ error: describe(err) })
+    return false
   }
 }
 
 export async function closeProject(): Promise<void> {
   if (store.get().dirty) await saveNow()
   pageSources = new Map()
+  inFlightBlobs.clear()
   store.set({ source: null, project: null, report: null, dirty: false, run: idleRun() })
 }
 
-/** Read a page image straight from disk. Not cached: a 200-page project will not fit. */
+/**
+ * Read a page image from the source.
+ *
+ * Deliberately not cached -- a 200-page project held as blobs will not fit -- but
+ * concurrent reads of the *same* page are collapsed, and reads overall are capped.
+ * Two views can ask for one page at once (the scan grid and the review sidebar), and
+ * for a source that renders its pages rather than reading them, doing that twice, or
+ * doing two hundred of them at once, is the difference between usable and hung.
+ */
 export function loadPageBlob(file: string): Promise<Blob> {
+  const pending = inFlightBlobs.get(file)
+  if (pending) return pending
+
   const page = pageSources.get(file)
   if (!page) return Promise.reject(new Error('no image on disk for ' + file))
-  return page.getFile()
+
+  const read = withReadSlot(() => page.getFile())
+  inFlightBlobs.set(file, read)
+  void read
+    .catch(() => undefined)
+    .finally(() => {
+      if (inFlightBlobs.get(file) === read) inFlightBlobs.delete(file)
+    })
+  return read
+}
+
+const inFlightBlobs = new Map<string, Promise<Blob>>()
+
+/**
+ * Enough to keep a scrolling grid filled without letting it stampede. Page reads can
+ * be genuine work (a PDF render), so this is a small number on purpose.
+ */
+const MAX_CONCURRENT_READS = 3
+
+let activeReads = 0
+const waitingReaders: (() => void)[] = []
+
+async function withReadSlot<T>(fn: () => Promise<T>): Promise<T> {
+  // `while`, not `if`: several readers can be woken before any of them takes its slot.
+  while (activeReads >= MAX_CONCURRENT_READS) {
+    await new Promise<void>((resolve) => waitingReaders.push(resolve))
+  }
+  activeReads++
+  try {
+    return await fn()
+  } finally {
+    activeReads--
+    waitingReaders.shift()?.()
+  }
 }
 
 export function hasPageBlob(file: string): boolean {
   return pageSources.has(file)
+}
+
+// -- adding pages -----------------------------------------------------------
+
+export interface AddImagesResult {
+  /** Names actually written, in the order they were added. */
+  added: string[]
+  /** Images that could not be added, with the reason. */
+  skipped: { type: string; reason: string }[]
+}
+
+/**
+ * Serialises `addImages` calls.
+ *
+ * Two pastes in quick succession would otherwise both read the same set of taken
+ * names, pick the same one, and have the second write overwrite the first.
+ */
+let addQueue: Promise<unknown> = Promise.resolve()
+
+/** Whether the open project can accept new pages at all. */
+export function canAddImages(): boolean {
+  const { source, project } = store.get()
+  return Boolean(source?.addImage && project)
+}
+
+/**
+ * Add images to the open project: write them through the source, then append them as
+ * pending pages.
+ *
+ * In that order deliberately -- the project must never name a page that does not
+ * exist, because reconcile would report it missing and drop it.
+ */
+export function addImages(blobs: Blob[]): Promise<AddImagesResult> {
+  const run = addQueue.then(
+    () => addImagesNow(blobs),
+    () => addImagesNow(blobs),
+  )
+  addQueue = run.catch(() => undefined)
+  return run
+}
+
+async function addImagesNow(blobs: Blob[]): Promise<AddImagesResult> {
+  const { source, project } = store.get()
+  if (!source?.addImage || !project) return { added: [], skipped: [] }
+
+  const skipped: AddImagesResult['skipped'] = []
+  const storable: { blob: Blob }[] = []
+  const extensions: string[] = []
+  for (const blob of blobs) {
+    try {
+      const ready = await toStorableImage(blob)
+      storable.push({ blob: ready.blob })
+      extensions.push(ready.extension)
+    } catch (err) {
+      skipped.push({ type: blob.type || 'unknown', reason: describe(err) })
+    }
+  }
+  if (storable.length === 0) return { added: [], skipped }
+
+  // Read the taken names now, after the awaits above, so a concurrent rescan cannot
+  // leave us planning against a stale list.
+  const current = store.get().project ?? project
+  const names = planNames(
+    [...current.pages.map((p) => p.file), source.jsonName, source.jsonName + '.tmp'],
+    extensions,
+  )
+
+  const written: { name: string; hash: string; page: PageSource }[] = []
+  for (const [i, ready] of storable.entries()) {
+    try {
+      const { name, page } = await source.addImage(names[i]!, ready.blob)
+      // Hash what was written, not what came in: a mismatch makes the next
+      // reconcile call a brand-new page `stale`.
+      written.push({ name, hash: await hashFile(ready.blob), page })
+    } catch (err) {
+      skipped.push({ type: ready.blob.type || 'unknown', reason: describe(err) })
+    }
+  }
+  if (written.length === 0) return { added: [], skipped }
+
+  for (const entry of written) pageSources.set(entry.name, entry.page)
+
+  updateProject((live) => {
+    // Compare inside the updater: a rescan between the write and here may already
+    // have discovered these files, and appending again would duplicate them.
+    const known = new Set(live.pages.map((p) => p.file))
+    const fresh = written.filter((entry) => !known.has(entry.name))
+    if (fresh.length === 0) return live
+
+    const pages = live.pages.slice().sort((a, b) => a.index - b.index)
+    for (const entry of fresh) pages.push(newPage(entry.name, 0, entry.hash))
+    return { ...live, pages: pages.map((page, i) => ({ ...page, index: i })) }
+  })
+  await saveNow()
+
+  return { added: written.map((entry) => entry.name), skipped }
 }
 
 /** Apply a change to the project and schedule a save. */

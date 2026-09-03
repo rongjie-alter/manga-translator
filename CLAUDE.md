@@ -3,9 +3,10 @@
 A browser-only comic translator (Preact + Vite, no backend). It reads a folder of
 manga/manhwa page images via the File System Access API, sends pages as images
 (vision, not OCR-then-translate) to Gemini or any OpenAI-compatible endpoint, and
-writes the translation back to a JSON file next to the images. No server component
-ships with the app — `mock_server.py` exists purely to develop and test against
-without burning a real API key or quota.
+writes the translation back to a JSON file next to the images. A single image or a
+PDF can be opened instead of a folder, and pages can be pasted or dropped into an
+open project. No server component ships with the app — `mock_server.py` exists purely
+to develop and test against without burning a real API key or quota.
 
 ## Commands
 
@@ -41,12 +42,22 @@ There is no lint script configured.
 ### The project file is the source of truth
 
 A project is a folder of page images plus one JSON file living beside them — there is
-no database and no backend. A single image/PDF gets `<base>.json`; a folder of images
-gets a fixed `translation.json` inside it (see `fs/source.ts`). `state/schema.ts`
+no database and no backend. A folder of images gets a fixed `translation.json` inside
+it (see `fs/source.ts`). `state/schema.ts`
 defines this format (`ProjectFile`) and owns forward-compatible migration
 (`migrate()`) — it's deliberately forgiving of hand-edited or older-build files and
 only throws on a schema version newer than the running build. Everything else
 (IndexedDB, localStorage) is a cache that can be wiped without losing user data.
+
+**A project opened from a single file is the one exception, and it is a real one.**
+`showOpenFilePicker()` returns a handle to the file and no way to reach its parent
+directory, so `<base>.json` cannot be written beside it. `fs/file-source.ts` therefore
+keeps that project's JSON — and any pasted pages — in IndexedDB, where it is the only
+copy until the user exports it. The scan view's export buttons (`fs/export.ts`:
+"Download translation.json", "Save a copy to a folder…") are the way out, and the UI
+says so. Consequence worth remembering: for this path IndexedDB is *not* a
+throwaway cache, so `navigator.storage.persist()` is requested on import and
+"Forget" deliberately leaves the stored JSON behind.
 
 App-level config (API keys, endpoints, prompt template, defaults) lives in
 `state/settings.ts` and is persisted to `localStorage`, separately from the project
@@ -63,10 +74,41 @@ same interface by `fetch`-ing `test-img/` and storing the JSON in `localStorage`
 this exists *only* because `showDirectoryPicker()` opens an OS dialog that browser
 automation cannot click, which would otherwise make the app untestable end-to-end. It
 is dynamically imported so it's dead-code-eliminated from the production bundle.
+`fs/file-source.ts` implements it for a picked image or PDF, holding pages in memory
+and the JSON in IndexedDB (see above); `fs/pdf.ts` rasterises PDF pages lazily with
+`pdfjs-dist`.
+
 `fs/project-file.ts` sits on top and reconciles a project against a fresh directory
 listing (`reconcile()`): new files are appended as pending pages in listing order,
 missing files are dropped, and pages whose image hash changed are marked `stale`
-(never `pending → stale` for a page that was never translated).
+(never `pending → stale` for a page that was never translated). Note that `reconcile`
+treats **array order** as authoritative and renumbers `index` from it — which is what
+ScanView's move buttons maintain.
+
+Two members of the seam are optional, and both exist for a reason:
+
+- `PageSource.hash?()` — a hash the source can produce *without* materialising the
+  file. `readDiskPages` hashes every page at open, so without this a PDF project
+  would render the whole book just to be opened. `fs/pdf.ts`'s `pageHashSeed()`
+  derives it from the document hash, the page number and `RASTER_VERSION` instead.
+- `ProjectSource.addImage?()` — accept a new page. Its absence is the capability
+  check the UI keys off to hide the paste/drop affordances. The source owns collision
+  resolution and returns the name it actually used, because only it can see what is
+  already there.
+
+**Two invariants that will silently eat translations if broken.** `reconcile` matches
+pages by name, so (1) a source's page names must be a pure function of page identity,
+never of position — renumbering after a reorder reads as every page being removed and
+a different set added; and (2) a memory-backed source must *list* the pages added to
+it (`fs/file-source.ts` persists them via `fs/blob-store.ts`), because a page held
+only in the store's private map comes back missing on the next rescan.
+
+Pasted and dropped images go through `fs/add-images.ts` → `store.addImages()`. It
+names new pages by continuing the project's existing numeric series, so that append
+order and `sortPageNames` order agree — a timestamped name would sort somewhere else
+entirely for anyone opening the folder without its JSON. Anything outside the
+extensions `isImageName` recognises is re-encoded to JPEG, since a file written as
+`.tiff` shows up now and is reported as vanished on the next rescan.
 
 ### Translation pipeline: `api/`
 
@@ -130,7 +172,19 @@ changes.
 
 The vitest suite (`src/test/`) covers the pure logic exhaustively — schema
 migration, reconciliation, parsing/repair, merge semantics, retry/backoff, request
-body construction — using `happy-dom`. UI components and `store.ts` are not
-unit-tested; verification there is manual, driven against `mock_server.py` and the
-in-app dev sample project (`import.meta.env.DEV`-only "Open sample pages" button on
-the Projects view, backed by `fs/dev-source.ts`).
+body construction, page naming, export planning, handle revival, and the store's
+lifecycle — using `happy-dom`. UI components are not unit-tested; verification there
+is manual, driven against `mock_server.py` and the in-app dev sample project
+(`import.meta.env.DEV`-only "Open sample pages" button on the Projects view, backed
+by `fs/dev-source.ts`, which implements `addImage` so paste and drop are testable).
+
+`happy-dom` has no canvas, `createImageBitmap` or `OffscreenCanvas`, so anything that
+rasterises is confined to one thin module (`fs/images.ts`, `fs/pdf.ts`) and stubbed
+at that boundary — `toStorableImage` takes an injectable re-encoder, and
+`file-source.test.ts` mocks `../fs/pdf` wholesale. **`fs/pdf.ts` itself has no
+automated coverage**: `.gitignore` excludes `*.pdf` and happy-dom cannot rasterise
+regardless, so it is verified by hand against a real PDF in a real browser.
+
+Watch out for `src/test/store.test.ts`, which mocks `../fs/project-file` with a
+factory listing only `loadProject` and `saveProject` — any *new* import `store.ts`
+takes from that module is `undefined` at test runtime until the factory is extended.

@@ -1,10 +1,14 @@
 /**
  * The on-disk project format and its migrations.
  *
- * A project file is the source of truth: it lives beside the images it describes
- * (`translation.json` inside an image folder, `<base>.json` next to a single file).
- * IndexedDB only caches directory handles and run state, so clearing the browser's
- * storage loses nothing a user cares about.
+ * A project file is the source of truth, and for a folder of images it lives beside
+ * them as `translation.json`; IndexedDB caches only handles and run state, so clearing
+ * the browser's storage loses nothing.
+ *
+ * A project imported from a single image or a PDF is the exception. There is no way to
+ * write `<base>.json` next to a picked file -- the file picker grants no access to the
+ * parent folder -- so that project's JSON is held in IndexedDB and *is* the only copy
+ * until the user exports it. Same format either way; different durability.
  */
 
 export const SCHEMA_VERSION = 1

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { reconcile, type DiskPage } from '../fs/project-file'
+import { describe, expect, it, vi } from 'vitest'
+import { readDiskPages, reconcile, type DiskPage } from '../fs/project-file'
+import type { PageSource, ProjectSource } from '../fs/source'
 import { newProjectFile, type ProjectFile } from '../state/schema'
 
 function translated(project: ProjectFile, file: string): ProjectFile {
@@ -98,5 +99,47 @@ describe('reconcile', () => {
     reconcile(p, disk(['a.jpg', 'CHANGED']))
     expect(p.pages).toHaveLength(2)
     expect(p.pages[0]!.hash).toBe('h1')
+  })
+})
+
+describe('readDiskPages', () => {
+  const sourceOf = (pages: PageSource[]): ProjectSource => ({
+    name: 't',
+    jsonName: 'translation.json',
+    writable: true,
+    readJson: async () => null,
+    writeJson: async () => {},
+    listPages: async () => pages,
+  })
+
+  it('uses the hash the source offers and never reads the file', async () => {
+    const getFile = vi.fn()
+    const hash = vi.fn(async () => 'cheap')
+    const { disk } = await readDiskPages(sourceOf([{ file: 'a.jpg', getFile, hash }]))
+
+    expect(disk).toEqual([{ file: 'a.jpg', hash: 'cheap' }])
+    expect(hash).toHaveBeenCalledOnce()
+    expect(getFile).not.toHaveBeenCalled()
+  })
+
+  it('falls back to hashing the file when the source offers no hash', async () => {
+    const getFile = vi.fn(async () => new File([new Uint8Array([1, 2, 3])], 'a.jpg'))
+    const { disk } = await readDiskPages(sourceOf([{ file: 'a.jpg', getFile }]))
+
+    expect(getFile).toHaveBeenCalledOnce()
+    expect(disk[0]!.hash).toMatch(/^[0-9a-f]{32}$/)
+  })
+
+  it('returns the page handles alongside the hashes so callers need not re-list', async () => {
+    const pages: PageSource[] = [
+      { file: 'a.jpg', getFile: async () => new File([], 'a.jpg'), hash: async () => 'h1' },
+      { file: 'b.jpg', getFile: async () => new File([], 'b.jpg'), hash: async () => 'h2' },
+    ]
+    const listPages = vi.fn(async () => pages)
+    const result = await readDiskPages({ ...sourceOf(pages), listPages })
+
+    expect(listPages).toHaveBeenCalledOnce()
+    expect(result.pages).toBe(pages)
+    expect(result.disk.map((d) => d.file)).toEqual(['a.jpg', 'b.jpg'])
   })
 })

@@ -7,7 +7,7 @@
  */
 
 import { hashFile } from './images'
-import type { ProjectSource } from './source'
+import type { PageSource, ProjectSource } from './source'
 import {
   migrate,
   newPage,
@@ -87,13 +87,30 @@ export function reconcile(project: ProjectFile, disk: DiskPage[]): ReconcileResu
   return { project: { ...project, pages: renumbered }, report, dirty }
 }
 
-export async function readDiskPages(source: ProjectSource): Promise<DiskPage[]> {
+export interface DiskListing {
+  /** The live page handles, in listing order. */
+  pages: PageSource[]
+  /** The same pages reduced to name + hash, which is all `reconcile` needs. */
+  disk: DiskPage[]
+}
+
+/**
+ * Enumerate and hash what the source currently holds.
+ *
+ * The handles come back alongside the hashes so callers do not have to list twice:
+ * two listings of the same source can disagree, and a page present in one but not
+ * the other shows up in the UI as an image that cannot be loaded.
+ */
+export async function readDiskPages(source: ProjectSource): Promise<DiskListing> {
   const pages = await source.listPages()
-  const out: DiskPage[] = []
+  const disk: DiskPage[] = []
   for (const page of pages) {
-    out.push({ file: page.file, hash: await hashFile(await page.getFile()) })
+    // Prefer a hash the source can give us for free; falling back to reading the
+    // file is what makes opening a rasterised source cost a full render.
+    const hash = page.hash ? await page.hash() : await hashFile(await page.getFile())
+    disk.push({ file: page.file, hash })
   }
-  return out
+  return { pages, disk }
 }
 
 export interface LoadResult {
@@ -101,6 +118,8 @@ export interface LoadResult {
   report: ReconcileReport
   /** True when no project JSON existed and one was created in memory. */
   created: boolean
+  /** The listing this project was reconciled against, so callers need not re-list. */
+  pages: PageSource[]
 }
 
 /**
@@ -113,7 +132,7 @@ export async function loadProject(
   source: ProjectSource,
   defaults: Partial<ProjectMeta & ProjectSettings> = {},
 ): Promise<LoadResult> {
-  const disk = await readDiskPages(source)
+  const { pages, disk } = await readDiskPages(source)
   const text = await source.readJson()
 
   if (text === null) {
@@ -121,11 +140,12 @@ export async function loadProject(
       project: newProjectFile(source.name, disk, defaults),
       report: { added: disk.map((d) => d.file), removed: [], changed: [] },
       created: true,
+      pages,
     }
   }
 
   const { project, report } = reconcile(migrate(JSON.parse(text)), disk)
-  return { project, report, created: false }
+  return { project, report, created: false, pages }
 }
 
 /** Stamp `updatedAt` at the moment of writing, so the file reflects the save, not the edit. */

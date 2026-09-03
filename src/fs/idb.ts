@@ -1,9 +1,14 @@
 /**
  * A minimal promise wrapper over one IndexedDB object store.
  *
- * Used only for things that can be regenerated: directory handles (so a project can be
- * reopened without re-picking the folder) and the recent-projects list. Nothing here is
- * authoritative -- the project JSON on disk is.
+ * Mostly used for things that can be regenerated: directory and file handles (so a
+ * project can be reopened without re-picking it) and the recent-projects list.
+ *
+ * With one exception, which is worth knowing about. A project imported from a single
+ * image or a PDF has nowhere on disk to keep its JSON -- `showOpenFilePicker` gives no
+ * access to the file's parent folder -- so for that kind of project the JSON and any
+ * pasted pages live here and are authoritative. See `file-source.ts`; the scan view's
+ * export buttons are how that work gets onto disk.
  */
 
 const DB_NAME = 'comic-translator'
