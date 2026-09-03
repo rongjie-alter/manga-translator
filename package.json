@@ -14,7 +14,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "pdftoimg-js": "^0.2.5",
+    "pdfjs-dist": "4.8.69",
     "preact": "^10.29.7"
   },
   "devDependencies": {
