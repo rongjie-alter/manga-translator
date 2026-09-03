@@ -312,14 +312,15 @@ function PdfResolutionCard() {
   }, [source?.pdfRenderEdge])
 
   if (!source?.reprocessPdf) return null
-  const reprocessPdf = source.reprocessPdf
 
   async function reprocess() {
     setBusy(true)
     setNote(null)
     setProblem(null)
     try {
-      await reprocessPdf(edge)
+      // Called through `source`, not a detached reference: `reprocessPdf` reads
+      // instance state via `this`, which a bare function reference would lose.
+      await source!.reprocessPdf!(edge)
       const ok = await openSource(source!)
       if (ok) {
         setNote(
