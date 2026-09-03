@@ -15,10 +15,19 @@ import { observeOnce } from './visibility'
  * page, and by the time the `<img>` exists the bytes are already in memory. Without
  * the gate, opening a 200-page project reads all 200 pages at once; when the pages
  * come from a PDF, that renders the entire book to look at a grid of thumbnails.
+ *
+ * The observed node is a wrapper that always stays mounted, never the `<img>`/
+ * placeholder/error node itself. A caller like ReviewView keeps one `PageImage`
+ * instance alive across page switches (only `file` changes), so if the observed node
+ * were swapped for a new element every time `url` flips from set to unset, the
+ * `IntersectionObserver` set up for the outgoing element would end up watching a
+ * node that's about to be unmounted -- it fires once more with `isIntersecting:
+ * false` (or never fires again), which clears the fallback timeout without ever
+ * resolving `visible`, wedging that page's image forever. Keeping the wrapper stable
+ * means the same element is observed for the entire lifetime of the component.
  */
 export function PageImage({ file, alt }: { file: string; alt?: string }) {
   const target = useRef<Element | null>(null)
-  // A callback ref, because the observed node changes element type as the image loads.
   const attach = (el: Element | null) => {
     target.current = el
   }
@@ -59,15 +68,17 @@ export function PageImage({ file, alt }: { file: string; alt?: string }) {
     }
   }, [file, visible])
 
-  if (error) {
-    return (
-      <div class="empty" ref={attach}>
-        {file} could not be loaded
-      </div>
-    )
-  }
-  if (!url) return <div class="empty page-placeholder" ref={attach} />
-  return <img src={url} alt={alt ?? file} loading="lazy" ref={attach} />
+  return (
+    <div ref={attach}>
+      {error ? (
+        <div class="empty">{file} could not be loaded</div>
+      ) : url ? (
+        <img src={url} alt={alt ?? file} loading="lazy" />
+      ) : (
+        <div class="empty page-placeholder" />
+      )}
+    </div>
+  )
 }
 
 export function StatusDot({ status }: { status: PageStatus }) {
