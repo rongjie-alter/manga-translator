@@ -2,3 +2,5 @@ dist/
 test-img/
 node_modules/
 *.pdf
+*.pyc
+__pycache__/
