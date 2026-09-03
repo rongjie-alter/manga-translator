@@ -42,6 +42,19 @@ export interface ProjectSource {
    * already there.
    */
   addImage?(name: string, blob: Blob): Promise<AddedImage>
+  /**
+   * Current render edge for a PDF-backed source, in pixels. Absent for a source that
+   * is not rasterized from a PDF, which is how the UI decides whether to offer a
+   * resolution control at all.
+   */
+  pdfRenderEdge?: number
+  /**
+   * Re-rasterize every page at a new edge, in place. Only present alongside
+   * `pdfRenderEdge`. Changes what later reads and hashes return; it does not itself
+   * touch the project -- the caller is expected to re-reconcile afterwards so pages
+   * whose rendered image changed are marked `stale`.
+   */
+  reprocessPdf?(renderEdge: number): Promise<void>
 }
 
 export interface AddedImage {

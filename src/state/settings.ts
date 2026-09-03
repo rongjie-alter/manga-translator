@@ -36,6 +36,8 @@ export interface AppSettings {
   batchSize: number
   /** Longest edge in pixels for uploaded pages. */
   maxEdge: number
+  /** Longest edge in pixels to rasterize PDF pages at, independent of `maxEdge`. */
+  pdfRenderEdge: number
   promptTemplate: string
   /** Request the model's reasoning trace, for the per-call debug view. */
   includeThoughts: boolean
@@ -71,6 +73,7 @@ export function defaultSettings(): AppSettings {
     readingDirection: 'rtl',
     batchSize: 4,
     maxEdge: 1600,
+    pdfRenderEdge: 2400,
     promptTemplate: DEFAULT_PROMPT_TEMPLATE,
     includeThoughts: false,
   }
@@ -114,6 +117,7 @@ export function mergeSettings(base: AppSettings, raw: unknown): AppSettings {
     readingDirection: pick(o['readingDirection'], ['rtl', 'ltr'], base.readingDirection),
     batchSize: int(o['batchSize'], 1, 20, base.batchSize),
     maxEdge: int(o['maxEdge'], 512, 4096, base.maxEdge),
+    pdfRenderEdge: int(o['pdfRenderEdge'], 800, 4096, base.pdfRenderEdge),
     promptTemplate:
       typeof o['promptTemplate'] === 'string' && o['promptTemplate'].trim() !== ''
         ? o['promptTemplate']

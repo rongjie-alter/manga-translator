@@ -17,7 +17,7 @@ import * as pdfjs from 'pdfjs-dist'
 // Vite resolves the specifier and emits the worker as a bundled asset. `new URL(...,
 // import.meta.url)` would not work here: that form only resolves relative paths.
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { fitWithin } from './images'
+import { fitToEdge } from './images'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -27,7 +27,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
  * It feeds the per-page hash, so raising it marks already-translated pages `stale`
  * rather than leaving a translation attached to an image it no longer describes.
  */
-export const RASTER_VERSION = 'r1'
+export const RASTER_VERSION = 'r2'
 
 /** JPEG quality for rendered pages, matching what `prepareImage` uses for uploads. */
 const QUALITY = 0.85
@@ -57,7 +57,7 @@ export interface RasterizedPdf {
   destroy(): Promise<void>
 }
 
-export async function openPdf(file: Blob, maxEdge: number): Promise<RasterizedPdf> {
+export async function openPdf(file: Blob, renderEdge: number): Promise<RasterizedPdf> {
   const data = new Uint8Array(await file.arrayBuffer())
   const doc = await pdfjs.getDocument({ data }).promise
 
@@ -79,7 +79,7 @@ export async function openPdf(file: Blob, maxEdge: number): Promise<RasterizedPd
     const page = await doc.getPage(pageNo)
     try {
       const natural = page.getViewport({ scale: 1 })
-      const fitted = fitWithin({ width: natural.width, height: natural.height }, maxEdge)
+      const fitted = fitToEdge({ width: natural.width, height: natural.height }, renderEdge)
       const viewport = page.getViewport({ scale: fitted.width / natural.width })
 
       const canvas = new OffscreenCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
@@ -151,10 +151,14 @@ export async function openPdf(file: Blob, maxEdge: number): Promise<RasterizedPd
  *
  * Hashing the rendered bytes would mean rendering every page just to open the
  * project. This instead identifies a page by the document it came from, its page
- * number, and the renderer version -- all known without doing any work. Re-saving
- * the PDF changes `documentHash`, so every page goes `stale` and keeps its
- * translation, rather than the project being unable to recognise itself.
+ * number, the renderer version, and the edge it was rendered at -- all known without
+ * doing any work. Re-saving the PDF changes `documentHash`, so every page goes
+ * `stale` and keeps its translation, rather than the project being unable to
+ * recognise itself. Including `renderEdge` means raising the render resolution
+ * (globally in Settings, or per-project via a reprocess) marks pages `stale` for the
+ * same reason, instead of silently leaving a translation attached to a lower-quality
+ * image than what is now on screen.
  */
-export function pageHashSeed(documentHash: string, pageNo: number): string {
-  return RASTER_VERSION + ':' + documentHash + ':' + pageNo
+export function pageHashSeed(documentHash: string, pageNo: number, renderEdge: number): string {
+  return RASTER_VERSION + ':' + documentHash + ':' + pageNo + ':' + renderEdge
 }

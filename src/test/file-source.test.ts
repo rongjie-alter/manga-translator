@@ -20,8 +20,9 @@ vi.mock('../fs/blob-store', () => ({
 
 vi.mock('../fs/pdf', () => ({
   openPdf: vi.fn(),
-  pageHashSeed: (documentHash: string, pageNo: number) => 'r1:' + documentHash + ':' + pageNo,
-  RASTER_VERSION: 'r1',
+  pageHashSeed: (documentHash: string, pageNo: number, renderEdge: number) =>
+    'r2:' + documentHash + ':' + pageNo + ':' + renderEdge,
+  RASTER_VERSION: 'r2',
 }))
 
 import { idbGet, idbSet } from '../fs/idb'
@@ -37,8 +38,9 @@ const pdfFile = (name = 'book.pdf', body = '%PDF-1.4') =>
 /** A rasterizer that counts renders, so tests can prove none happened. */
 function fakePdf(pageCount: number) {
   const renderPage = vi.fn(async (pageNo: number) => new Blob(['page ' + pageNo]))
-  vi.mocked(openPdf).mockResolvedValue({ pageCount, renderPage, destroy: async () => {} })
-  return { renderPage }
+  const destroy = vi.fn(async () => {})
+  vi.mocked(openPdf).mockResolvedValue({ pageCount, renderPage, destroy })
+  return { renderPage, destroy }
 }
 
 beforeEach(() => {
@@ -195,6 +197,48 @@ describe('a PDF project', () => {
     expect(renderPage).toHaveBeenCalledExactlyOnceWith(3)
     expect(image.name).toBe('page-003.jpg')
     expect(image.type).toBe('image/jpeg')
+  })
+
+  it('reports its current render edge, matching what it was opened at', async () => {
+    fakePdf(1)
+    const source = await openFileProject(pdfFile())
+    // No local override in this test environment, so the built-in default applies.
+    expect(source.pdfRenderEdge).toBe(2400)
+  })
+
+  it('stales already-translated pages when reprocessed at a different resolution', async () => {
+    fakePdf(2)
+    const source = await openFileProject(pdfFile())
+    const before = await readDiskPages(source)
+    const project = newProjectFile('book.pdf', before.disk)
+    const translated = {
+      ...project,
+      pages: project.pages.map((p) => ({ ...p, status: 'translated' as const })),
+    }
+
+    await source.reprocessPdf!(3200)
+    const after = await readDiskPages(source)
+    const { project: next, report } = reconcile(translated, after.disk)
+
+    expect(source.pdfRenderEdge).toBe(3200)
+    expect(report.changed).toEqual(['page-001.jpg', 'page-002.jpg'])
+    expect(next.pages.map((p) => p.status)).toEqual(['stale', 'stale'])
+  })
+
+  it('reprocesses through a freshly opened renderer, keeping page identity', async () => {
+    const first = fakePdf(2)
+    const source = await openFileProject(pdfFile())
+
+    const second = fakePdf(2)
+    await source.reprocessPdf!(3200)
+
+    const pages = await source.listPages()
+    expect(pages.map((p) => p.file)).toEqual(['page-001.jpg', 'page-002.jpg'])
+
+    await pages[0]!.getFile()
+    expect(first.renderPage).not.toHaveBeenCalled()
+    expect(second.renderPage).toHaveBeenCalledExactlyOnceWith(1)
+    expect(first.destroy).toHaveBeenCalledOnce()
   })
 })
 

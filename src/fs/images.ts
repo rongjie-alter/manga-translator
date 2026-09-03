@@ -36,6 +36,25 @@ export function fitWithin(size: Dimensions, maxEdge: number): Dimensions {
 }
 
 /**
+ * Scale `size` so its longest edge is exactly `targetEdge`, up or down.
+ *
+ * Unlike `fitWithin`, this allows upscaling. That matters for rasterizing a PDF page:
+ * its declared page-box size is not the resolution of the scan embedded inside it, so
+ * a page box smaller than `targetEdge` is not "already small" the way a real photo
+ * would be -- rendering it into a bigger canvas lets the renderer recover embedded
+ * detail that would otherwise be thrown away.
+ */
+export function fitToEdge(size: Dimensions, targetEdge: number): Dimensions {
+  const longest = Math.max(size.width, size.height)
+  if (longest === 0) return { width: size.width, height: size.height }
+  const scale = targetEdge / longest
+  return {
+    width: Math.max(1, Math.round(size.width * scale)),
+    height: Math.max(1, Math.round(size.height * scale)),
+  }
+}
+
+/**
  * Gemini tiles images at 768x768 and charges 258 tokens per tile (a single tile for
  * anything under 384px on both edges). Everything about batching cost follows from this.
  */

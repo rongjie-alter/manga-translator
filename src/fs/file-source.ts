@@ -48,17 +48,58 @@ export function isPdfFile(file: File): boolean {
   return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
 }
 
+/**
+ * What a PDF-backed project needs to keep around after the initial open, so a later
+ * `reprocessPdf` can swap in a fresh renderer without disturbing page identity: names
+ * are a pure function of page number (see `openPdfState` below) and must never
+ * change, but the renderer producing their bytes, and the edge it renders at, are
+ * mutable.
+ */
+interface PdfState {
+  file: File
+  documentHash: string
+  pdf: RasterizedPdfLike
+  renderEdge: number
+  /** `page-001.jpg` etc, index 0 is page 1. Fixed for the life of the project. */
+  pageNames: string[]
+  pageHashSeed: (documentHash: string, pageNo: number, renderEdge: number) => string
+}
+
+/** Just the bit of `RasterizedPdf` this module uses, so it need not import `./pdf` eagerly. */
+interface RasterizedPdfLike {
+  renderPage(pageNo: number): Promise<Blob>
+  destroy(): Promise<void>
+}
+
 class MemoryProjectSource implements ProjectSource {
   readonly writable = true
   readonly jsonName: string
+  private pdfState: PdfState | null
 
   constructor(
     readonly name: string,
     private readonly projectId: string,
-    /** Pages that come from the picked file itself. */
+    /** Pages that come from the picked file itself, when it is not a PDF. */
     private readonly basePages: PageSource[],
+    pdfState: PdfState | null = null,
   ) {
     this.jsonName = jsonNameForFile(name)
+    this.pdfState = pdfState
+  }
+
+  get pdfRenderEdge(): number | undefined {
+    return this.pdfState?.renderEdge
+  }
+
+  async reprocessPdf(renderEdge: number): Promise<void> {
+    const state = this.pdfState
+    if (!state) throw new Error('this project is not backed by a PDF')
+    const { openPdf } = await import('./pdf')
+    const pdf = await openPdf(state.file, renderEdge)
+    const old = state.pdf
+    state.pdf = pdf
+    state.renderEdge = renderEdge
+    await old.destroy()
   }
 
   async readJson(): Promise<string | null> {
@@ -70,12 +111,13 @@ class MemoryProjectSource implements ProjectSource {
   }
 
   async listPages(): Promise<PageSource[]> {
+    const base = this.pdfState ? pdfPageSources(this.pdfState) : this.basePages
     // Added pages come after the file's own, matching where they were appended.
     const added = sortPageNames(await listPageBlobNames(this.projectId)).map((file) => ({
       file,
       getFile: () => this.readAdded(file),
     }))
-    return [...this.basePages, ...added]
+    return [...base, ...added]
   }
 
   /**
@@ -86,7 +128,7 @@ class MemoryProjectSource implements ProjectSource {
    */
   async addImage(name: string, blob: Blob): Promise<AddedImage> {
     const taken = new Set([
-      ...this.basePages.map((page) => page.file),
+      ...(this.pdfState?.pageNames ?? this.basePages.map((page) => page.file)),
       ...(await listPageBlobNames(this.projectId)),
     ])
     const finalName = uniqueName(name, taken)
@@ -108,8 +150,11 @@ class MemoryProjectSource implements ProjectSource {
 export async function openFileProject(file: File): Promise<ProjectSource> {
   const projectId = fileProjectId(file.name)
   requestDurableStorage()
-  const pages = isPdfFile(file) ? await pdfPages(file) : await imagePage(file)
-  return new MemoryProjectSource(file.name, projectId, pages)
+  if (isPdfFile(file)) {
+    const pdfState = await openPdfState(file, loadSettings().pdfRenderEdge)
+    return new MemoryProjectSource(file.name, projectId, [], pdfState)
+  }
+  return new MemoryProjectSource(file.name, projectId, await imagePage(file))
 }
 
 /**
@@ -131,28 +176,35 @@ async function imagePage(file: File): Promise<PageSource[]> {
   return [{ file: name, getFile: async () => new File([storable.blob], name, { type: storable.blob.type }) }]
 }
 
-async function pdfPages(file: File): Promise<PageSource[]> {
+async function openPdfState(file: File, renderEdge: number): Promise<PdfState> {
   // Dynamic import so `pdfjs-dist` is not in the bundle for folder-only users.
   const { openPdf, pageHashSeed } = await import('./pdf')
   const documentHash = await hashFile(file)
-  const pdf = await openPdf(file, loadSettings().maxEdge)
+  const pdf = await openPdf(file, renderEdge)
 
   // Names are a pure function of the *page number*, never of position. Reordering
   // pages in the scan view must not rename them: reconcile matches pages by name, so
   // a renumbered page reads as one page removed and a different one added, which
-  // would delete the translation.
+  // would delete the translation. Fixed at open time, unaffected by a later
+  // `reprocessPdf` -- only the renderer producing their bytes changes.
   const width = Math.max(3, String(pdf.pageCount).length)
-  const pages: PageSource[] = []
-  for (let pageNo = 1; pageNo <= pdf.pageCount; pageNo++) {
-    const file = 'page-' + String(pageNo).padStart(width, '0') + '.jpg'
-    pages.push({
+  const pageNames = Array.from(
+    { length: pdf.pageCount },
+    (_, i) => 'page-' + String(i + 1).padStart(width, '0') + '.jpg',
+  )
+  return { file, documentHash, pdf, renderEdge, pageNames, pageHashSeed }
+}
+
+function pdfPageSources(state: PdfState): PageSource[] {
+  return state.pageNames.map((file, i) => {
+    const pageNo = i + 1
+    return {
       file,
-      getFile: async () => new File([await pdf.renderPage(pageNo)], file, { type: 'image/jpeg' }),
+      getFile: async () => new File([await state.pdf.renderPage(pageNo)], file, { type: 'image/jpeg' }),
       // Derived, not measured -- so opening the project does not render the book.
-      hash: () => hashFile(new Blob([pageHashSeed(documentHash, pageNo)])),
-    })
-  }
-  return pages
+      hash: () => hashFile(new Blob([state.pageHashSeed(state.documentHash, pageNo, state.renderEdge)])),
+    }
+  })
 }
 
 function baseName(fileName: string): string {

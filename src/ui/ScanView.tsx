@@ -138,6 +138,8 @@ export function ScanView() {
         </div>
       </div>
 
+      <PdfResolutionCard />
+
       <AddPagesCard />
 
       <ExportCard />
@@ -286,6 +288,77 @@ function AddPagesCard() {
           {note}
         </p>
       )}
+    </div>
+  )
+}
+
+/**
+ * A do-over for a PDF-backed project: re-render every page at a different resolution
+ * without reopening the file.
+ *
+ * Hidden unless `source.reprocessPdf` exists, the same capability-check pattern
+ * `AddPagesCard` uses for `addImage` -- a folder or single-image project has no
+ * renderer to reconfigure.
+ */
+function PdfResolutionCard() {
+  const { source } = useStore()
+  const [edge, setEdge] = useState(source?.pdfRenderEdge ?? 2400)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (source?.pdfRenderEdge) setEdge(source.pdfRenderEdge)
+  }, [source?.pdfRenderEdge])
+
+  if (!source?.reprocessPdf) return null
+  const reprocessPdf = source.reprocessPdf
+
+  async function reprocess() {
+    setBusy(true)
+    setNote(null)
+    setProblem(null)
+    try {
+      await reprocessPdf(edge)
+      const ok = await openSource(source!)
+      if (ok) {
+        setNote(
+          'Reprocessed at ' +
+            edge +
+            'px. Already-translated pages whose image changed are marked stale.',
+        )
+      }
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div class="card">
+      <h2>PDF resolution</h2>
+      <p class="muted" style="margin-top:-6px">
+        Re-renders every page at a new resolution. Use this if pages came out too blurry
+        to read; already-translated pages that change are marked stale so they can be
+        retranslated against the sharper image.
+      </p>
+      {problem && <Banner kind="warn">{problem}</Banner>}
+      <div class="row" style="margin-top:14px">
+        <input
+          type="number"
+          min={800}
+          max={4096}
+          step={64}
+          value={edge}
+          onInput={(e) => setEdge(clamp(Number(e.currentTarget.value), 800, 4096))}
+          style="width:100px"
+        />
+        <button disabled={busy} onClick={() => void reprocess()}>
+          {busy ? 'Reprocessing…' : 'Reprocess pages'}
+        </button>
+        {!busy && note && <span class="muted">{note}</span>}
+      </div>
     </div>
   )
 }

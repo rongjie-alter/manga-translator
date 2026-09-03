@@ -141,6 +141,24 @@ export function SettingsView() {
             />
           </div>
           <div>
+            <label for="s-pdf-edge">PDF render resolution (px)</label>
+            <input
+              id="s-pdf-edge"
+              type="number"
+              min={800}
+              max={4096}
+              step={64}
+              value={settings.pdfRenderEdge}
+              onInput={(e) =>
+                updateSettings({ pdfRenderEdge: num(e.currentTarget.value, 800, 4096, 2400) })
+              }
+            />
+            <p class="muted" style="margin:4px 0 0">
+              Independent of the upload size above. Only affects PDF-sourced projects — raise
+              it if scanned pages come out too blurry to read.
+            </p>
+          </div>
+          <div>
             <label for="s-thoughts">Reasoning trace</label>
             <select
               id="s-thoughts"
