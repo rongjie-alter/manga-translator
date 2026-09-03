@@ -156,6 +156,11 @@ export function translatablePages(p: ProjectFile): Page[] {
   return p.pages.filter((page) => !page.excluded).sort((a, b) => a.index - b.index)
 }
 
+/** Every page in reading order, including excluded ones -- what the reader displays. */
+export function orderedPages(p: ProjectFile): Page[] {
+  return p.pages.slice().sort((a, b) => a.index - b.index)
+}
+
 export function pageNeedsTranslation(page: Page): boolean {
   return page.status === 'pending' || page.status === 'failed' || page.status === 'stale'
 }

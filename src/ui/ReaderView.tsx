@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { translatablePages, type Line, type Page } from '../state/schema'
+import { orderedPages, type Line, type Page } from '../state/schema'
 import { useStore } from '../state/store'
 import { PageImage, STATUS_LABEL } from './common'
 
@@ -18,7 +18,7 @@ export function ReaderView() {
   const [visible, setVisible] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const pages = project ? translatablePages(project) : []
+  const pages = project ? orderedPages(project) : []
 
   useEffect(() => {
     const container = containerRef.current
@@ -100,7 +100,9 @@ function Spread({
           </span>
         </div>
         {page.lines.length === 0 ? (
-          <p class="muted">{page.lastRun?.error ?? STATUS_LABEL[page.status]}</p>
+          <p class="muted">
+            {page.excluded ? 'excluded from translation' : (page.lastRun?.error ?? STATUS_LABEL[page.status])}
+          </p>
         ) : (
           <ol>
             {page.lines.map((line) => (

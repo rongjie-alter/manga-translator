@@ -2,6 +2,7 @@ import { navigate } from '../app'
 import { downloadProjectJson, saveCopyToFolder, type CopyProgress } from '../fs/export'
 import { isFsaSupported } from '../fs/handles'
 import {
+  orderedPages,
   SOURCE_LANG_NAMES,
   TARGET_LANG_NAMES,
   type Page,
@@ -147,11 +148,11 @@ export function ScanView() {
       <div class="card">
         <h2>Pages</h2>
         <p class="muted" style="margin-top:-6px">
-          Excluded pages are skipped by the translator and hidden in the reader. Use this
-          for covers, ads and afterwords.
+          Excluded pages are skipped by the translator, but still shown in the reader. Use
+          this for covers, ads and afterwords.
         </p>
         <div class="pages">
-          {ordered(project).map((page, position) => (
+          {orderedPages(project).map((page, position) => (
             <PageCard
               key={page.file}
               page={page}
@@ -454,10 +455,6 @@ function PageCard({ page, position, last }: { page: Page; position: number; last
   )
 }
 
-function ordered(project: ProjectFile): Page[] {
-  return project.pages.slice().sort((a, b) => a.index - b.index)
-}
-
 function setMeta(patch: Partial<ProjectFile['project']>): void {
   updateProject((p) => ({ ...p, project: { ...p.project, ...patch } }))
 }
@@ -465,7 +462,7 @@ function setMeta(patch: Partial<ProjectFile['project']>): void {
 /** Swap a page with its neighbour, then renumber so `index` stays contiguous. */
 function move(file: string, delta: number): void {
   updateProject((project) => {
-    const pages = ordered(project)
+    const pages = orderedPages(project)
     const at = pages.findIndex((p) => p.file === file)
     const to = at + delta
     if (at < 0 || to < 0 || to >= pages.length) return project
