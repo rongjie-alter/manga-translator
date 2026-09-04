@@ -154,7 +154,22 @@ export async function openFileProject(file: File): Promise<ProjectSource> {
     const pdfState = await openPdfState(file, loadSettings().pdfRenderEdge)
     return new MemoryProjectSource(file.name, projectId, [], pdfState)
   }
-  return new MemoryProjectSource(file.name, projectId, await imagePage(file))
+  return new MemoryProjectSource(file.name, projectId, await imagePages([file]))
+}
+
+/**
+ * Turn a set of loose dropped images into a project, with no folder or file of
+ * their own to be named or keyed after.
+ *
+ * Unlike `openFileProject`, there is nothing stable to key the project on -- these
+ * files have no shared identity to reopen against -- so each drop is its own project,
+ * same as a single image picked through the file-input fallback (also never
+ * remembered under "Recent").
+ */
+export async function openImagesProject(files: File[], name: string): Promise<ProjectSource> {
+  const projectId = 'drop:' + crypto.randomUUID()
+  requestDurableStorage()
+  return new MemoryProjectSource(name, projectId, await imagePages(files))
 }
 
 /**
@@ -169,11 +184,27 @@ function requestDurableStorage(): void {
   void navigator.storage?.persist?.().catch(() => undefined)
 }
 
-/** A single image is one page, under a name a directory listing would recognise. */
-async function imagePage(file: File): Promise<PageSource[]> {
-  const storable = await toStorableImage(file)
-  const name = storable.converted ? baseName(file.name) + storable.extension : file.name
-  return [{ file: name, getFile: async () => new File([storable.blob], name, { type: storable.blob.type }) }]
+/**
+ * Each file becomes one page, under a name a directory listing would recognise.
+ *
+ * Names are de-duplicated with `uniqueName`: a single picked file can never collide
+ * with itself, but a batch of dropped files can (two `page.jpg` from different
+ * folders), and silently overwriting one page's blob with another's would lose it.
+ */
+async function imagePages(files: File[]): Promise<PageSource[]> {
+  const taken = new Set<string>()
+  const pages: PageSource[] = []
+  for (const file of files) {
+    const storable = await toStorableImage(file)
+    const base = storable.converted ? baseName(file.name) + storable.extension : file.name
+    const name = uniqueName(base, taken)
+    taken.add(name)
+    pages.push({
+      file: name,
+      getFile: async () => new File([storable.blob], name, { type: storable.blob.type }),
+    })
+  }
+  return pages
 }
 
 async function openPdfState(file: File, renderEdge: number): Promise<PdfState> {

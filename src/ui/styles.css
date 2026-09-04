@@ -595,3 +595,22 @@ label {
 .page-placeholder {
   min-height: 120px;
 }
+
+.drop-overlay {
+  position: fixed;
+  inset: 12px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.drop-overlay strong {
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: var(--panel);
+}

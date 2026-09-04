@@ -9,6 +9,7 @@ import {
   reviveProject,
 } from '../fs/handles'
 import type { RememberedProject } from '../fs/handles'
+import { projectSourceFromDrop } from '../fs/drop-project'
 import { closeProject, openSource, useStore } from '../state/store'
 import { Banner } from './common'
 
@@ -17,6 +18,7 @@ export function ProjectsView() {
   const [recent, setRecent] = useState<RememberedProject[]>([])
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
+  const [dragging, setDragging] = useState(false)
   const supported = isFsaSupported()
 
   useEffect(() => {
@@ -52,8 +54,58 @@ export function ProjectsView() {
     }
   }
 
+  // A whole-page drop target: a folder, loose images, or a PDF dropped anywhere on
+  // this screen starts a project, the same as the buttons below. Scoped to this
+  // view's lifetime, so it never competes with the scan view's own drop handling --
+  // only one of the two is ever mounted at a time.
+  useEffect(() => {
+    let depth = 0
+    const isFileDrag = (event: DragEvent) => Boolean(event.dataTransfer?.types.includes('Files'))
+
+    function onDragEnter(event: DragEvent) {
+      if (!isFileDrag(event)) return
+      event.preventDefault()
+      depth++
+      setDragging(true)
+    }
+    function onDragOver(event: DragEvent) {
+      if (!isFileDrag(event)) return
+      event.preventDefault()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+    }
+    function onDragLeave(event: DragEvent) {
+      if (!isFileDrag(event)) return
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setDragging(false)
+    }
+    function onDrop(event: DragEvent) {
+      if (!isFileDrag(event)) return
+      event.preventDefault()
+      depth = 0
+      setDragging(false)
+      const data = event.dataTransfer
+      if (data) void open(() => projectSourceFromDrop(data))
+    }
+
+    document.addEventListener('dragenter', onDragEnter)
+    document.addEventListener('dragover', onDragOver)
+    document.addEventListener('dragleave', onDragLeave)
+    document.addEventListener('drop', onDrop)
+    return () => {
+      document.removeEventListener('dragenter', onDragEnter)
+      document.removeEventListener('dragover', onDragOver)
+      document.removeEventListener('dragleave', onDragLeave)
+      document.removeEventListener('drop', onDrop)
+    }
+  }, [])
+
   return (
     <div>
+      {dragging && (
+        <div class="drop-overlay">
+          <strong>Drop a folder, images, or a PDF to open a project</strong>
+        </div>
+      )}
       <h1>Projects</h1>
       <p class="sub">
         A project is a folder of page images plus a <code>translation.json</code> written
@@ -113,6 +165,9 @@ export function ProjectsView() {
             </button>
           )}
         </div>
+        <p class="muted" style="margin-bottom:0">
+          Or drop a folder, a PDF, or a group of images anywhere on this page.
+        </p>
       </div>
 
       {project && source && (

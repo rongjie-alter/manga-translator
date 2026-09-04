@@ -107,7 +107,16 @@ export async function pickDirectoryProject(): Promise<ProjectSource | null> {
   const dir = await picker({ mode: 'readwrite', id: 'comic-translator-project' }).catch(
     swallowAbort,
   )
-  if (!dir) return null
+  return dir ? openDirectoryHandle(dir) : null
+}
+
+/**
+ * Turn a directory handle -- from the picker above, or from a drop -- into a project.
+ *
+ * Shared so a dropped folder gets the same permission check and "Recent" entry as
+ * one picked through the dialog.
+ */
+export async function openDirectoryHandle(dir: FileSystemDirectoryHandle): Promise<ProjectSource> {
   if (!(await ensurePermission(dir))) throw new Error('Write permission for the folder was denied')
   await rememberHandle(dir.name, dir)
   return new DirectoryProjectSource(dir.name, dir)
