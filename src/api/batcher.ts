@@ -64,6 +64,7 @@ export interface RunDeps {
   attempts?: number
   baseDelayMs?: number
   rateLimitDelayMs?: number
+  serverErrorDelayMs?: number
 }
 
 export interface RunOptions {
@@ -219,6 +220,7 @@ async function translateBatch(
       attempts: deps.attempts ?? 3,
       baseDelayMs: deps.baseDelayMs,
       rateLimitDelayMs: deps.rateLimitDelayMs,
+      serverErrorDelayMs: deps.serverErrorDelayMs,
       signal: opts.signal,
       sleep: deps.sleep,
       onWait: ({ attempt, delayMs, error }) =>

@@ -44,13 +44,25 @@ describe('withRetry', () => {
     expect(r.delays).toEqual([20_000, 40_000])
   })
 
-  it('backs off quickly on an ordinary server error', async () => {
+  it('waits patiently on a server error, not the fast network-blip curve', async () => {
+    // A "high demand" / overloaded-model response does not clear in a second --
+    // retrying on the ~1s curve used for a one-off network blip just re-hits the
+    // same overloaded model in quick succession.
     const r = recorder()
     await withRetry(fail(new ApiError('boom', 'server', 503, null), 3), {
       sleep: r.sleep,
       baseDelayMs: 1000,
     })
-    expect(r.delays).toEqual([1000, 2000])
+    expect(r.delays).toEqual([5000, 10_000])
+  })
+
+  it('honors an explicit serverErrorDelayMs override', async () => {
+    const r = recorder()
+    await withRetry(fail(new ApiError('boom', 'server', 503, null), 2), {
+      sleep: r.sleep,
+      serverErrorDelayMs: 500,
+    })
+    expect(r.delays).toEqual([500])
   })
 
   it('never waits longer than maxDelayMs', async () => {

@@ -229,6 +229,16 @@ function num(v: unknown): number {
  */
 const RATE_LIMIT_BASE_DELAY_MS = 20_000
 
+/**
+ * How long to wait after a 5xx with no usable `Retry-After`.
+ *
+ * A "high demand" / overloaded-model response does not clear in a second either --
+ * retrying on the same ~1s curve used for a one-off network blip just re-hits the
+ * same overloaded model three times in quick succession and burns the attempt budget
+ * for nothing. Patient, but not as patient as a rate limit's per-minute quota.
+ */
+const SERVER_ERROR_BASE_DELAY_MS = 5_000
+
 export interface RetryOptions {
   /** Total attempts, including the first. */
   attempts?: number
@@ -236,6 +246,8 @@ export interface RetryOptions {
   baseDelayMs?: number
   /** Base delay for rate limits with no `Retry-After`. */
   rateLimitDelayMs?: number
+  /** Base delay for 5xx server errors with no `Retry-After`. */
+  serverErrorDelayMs?: number
   maxDelayMs?: number
   signal?: AbortSignal
   /** Called before each wait, so the UI can show what it is waiting for. */
@@ -262,7 +274,11 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
 
       // A server that says when to come back knows better than our backoff curve does.
       const floor =
-        apiError.kind === 'rate_limit' ? (opts.rateLimitDelayMs ?? RATE_LIMIT_BASE_DELAY_MS) : base
+        apiError.kind === 'rate_limit'
+          ? (opts.rateLimitDelayMs ?? RATE_LIMIT_BASE_DELAY_MS)
+          : apiError.kind === 'server'
+            ? (opts.serverErrorDelayMs ?? SERVER_ERROR_BASE_DELAY_MS)
+            : base
       const backoff = Math.min(max, floor * 2 ** (attempt - 1))
       const delayMs = Math.min(max, apiError.retryAfterMs ?? backoff)
       opts.onWait?.({ attempt, delayMs, error: apiError })
