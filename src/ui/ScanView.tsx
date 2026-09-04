@@ -406,7 +406,9 @@ function ExportCard() {
       </p>
       {failure && <Banner kind="error">{failure}</Banner>}
       <div class="row" style="margin-top:14px">
-        <button onClick={() => downloadProjectJson(project)}>Download translation.json</button>
+        <button onClick={() => downloadProjectJson(project, source.jsonName)}>
+          Download {source.jsonName}
+        </button>
         <button
           class="primary"
           disabled={!canPickFolder || progress !== null}

@@ -60,24 +60,27 @@ export function planCopy(project: ProjectFile): CopyPlan {
   }
 }
 
-/** Hand the project JSON to the browser's downloader. */
-export function downloadProjectJson(project: ProjectFile): void {
+/**
+ * Hand the project JSON to the browser's downloader.
+ *
+ * `jsonName` should be `source.jsonName` -- the same name the scan/projects views
+ * already show the user (`foo.pdf` -> `foo.json`, or `translation.json` for a
+ * folder). Re-deriving a name from `project.project.name` here previously mangled
+ * any title with non-ASCII characters (e.g. Japanese), since it was scrubbed by a
+ * `\w`-only sanitizer.
+ */
+export function downloadProjectJson(project: ProjectFile, jsonName: string): void {
   const stamped = stampProject(project)
   const blob = new Blob([serializeProject(stamped)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = jsonDownloadName(stamped)
+  link.download = jsonName
   document.body.append(link)
   link.click()
   link.remove()
   // Revoking synchronously can cancel the download in some engines.
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
-}
-
-function jsonDownloadName(project: ProjectFile): string {
-  const safe = project.project.name.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '')
-  return (safe || 'project') + '.translation.json'
 }
 
 export interface CopyProgress {
