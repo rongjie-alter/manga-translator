@@ -13,12 +13,28 @@ import { PageImage, STATUS_LABEL } from './common'
 const WINDOW_BEFORE = 2
 const WINDOW_AFTER = 4
 
+/**
+ * Last-read page, kept in memory only (not the project JSON -- it's UI state, not
+ * something a shared folder should carry). Views unmount on navigation, so this is
+ * what survives switching to Settings and back instead of resetting to page 1.
+ */
+let lastPosition: { projectName: string; index: number } | null = null
+
 export function ReaderView() {
   const { project } = useStore()
-  const [visible, setVisible] = useState(0)
-  const containerRef = useRef<HTMLDivElement>(null)
-
   const pages = project ? orderedPages(project) : []
+
+  const initial =
+    lastPosition && project && lastPosition.projectName === project.project.name
+      ? Math.min(lastPosition.index, Math.max(pages.length - 1, 0))
+      : 0
+  const [visible, setVisible] = useState(initial)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const initialScroll = useRef(initial)
+
+  useEffect(() => {
+    if (project) lastPosition = { projectName: project.project.name, index: visible }
+  }, [visible, project])
 
   useEffect(() => {
     const container = containerRef.current
@@ -34,6 +50,12 @@ export function ReaderView() {
       { rootMargin: '200px 0px', threshold: 0.01 },
     )
     for (const el of container.querySelectorAll('[data-index]')) observer.observe(el)
+
+    if (initialScroll.current > 0) {
+      container.querySelector(`[data-index="${initialScroll.current}"]`)?.scrollIntoView({ block: 'start' })
+      initialScroll.current = 0
+    }
+
     return () => observer.disconnect()
   }, [pages.length])
 
