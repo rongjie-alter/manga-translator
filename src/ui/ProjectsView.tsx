@@ -10,6 +10,7 @@ import {
 } from '../fs/handles'
 import type { RememberedProject } from '../fs/handles'
 import { projectSourceFromDrop } from '../fs/drop-project'
+import { openThreadProject, parseThreadUrl } from '../fs/thread-project'
 import { closeProject, openSource, useStore } from '../state/store'
 import { Banner } from './common'
 
@@ -18,6 +19,8 @@ export function ProjectsView() {
   const [recent, setRecent] = useState<RememberedProject[]>([])
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
+  const [progress, setProgress] = useState<string | null>(null)
+  const [threadUrl, setThreadUrl] = useState('')
   const [dragging, setDragging] = useState(false)
   const supported = isFsaSupported()
 
@@ -51,7 +54,17 @@ export function ProjectsView() {
       setProblem(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
+      setProgress(null)
     }
+  }
+
+  async function openThread(urlToOpen: string) {
+    const target = parseThreadUrl(urlToOpen)
+    if (!target) {
+      setProblem('Please enter a valid Twitter/X or Bluesky thread URL.')
+      return
+    }
+    await open(() => openThreadProject(target, setProgress))
   }
 
   // A whole-page drop target: a folder, loose images, or a PDF dropped anywhere on
@@ -122,6 +135,7 @@ export function ProjectsView() {
           beside the file, so export it when you are done.
         </Banner>
       )}
+      {progress && <Banner kind="info">{progress}</Banner>}
       {problem && <Banner kind="error">{problem}</Banner>}
 
       <div class="card">
@@ -168,6 +182,34 @@ export function ProjectsView() {
         <p class="muted" style="margin-bottom:0">
           Or drop a folder, a PDF, or a group of images anywhere on this page.
         </p>
+
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">
+          <label for="thread-url-input">Twitter / Bluesky thread URL</label>
+          <div class="row" style="gap:8px">
+            <input
+              id="thread-url-input"
+              type="url"
+              placeholder="https://x.com/.../status/... or https://bsky.app/profile/.../post/..."
+              value={threadUrl}
+              disabled={busy}
+              onInput={(e) => setThreadUrl((e.target as HTMLInputElement).value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && threadUrl.trim() && !busy) {
+                  e.preventDefault()
+                  void openThread(threadUrl)
+                }
+              }}
+              style="flex:1"
+            />
+            <button
+              disabled={busy || !threadUrl.trim()}
+              onClick={() => void openThread(threadUrl)}
+              style="white-space:nowrap"
+            >
+              {busy && progress ? progress : 'Import thread'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {project && source && (
