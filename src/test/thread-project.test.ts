@@ -298,6 +298,133 @@ describe('openThreadProject', () => {
     expect(pages.map((p) => p.file)).toEqual(['page-01.webp', 'page-02.webp'])
   })
 
+  it('downloads Bluesky photos via the author PDS getBlob endpoint, bypassing the CDN', async () => {
+    const did = 'did:plc:otafc3kbbjqm72i2yqqrsj43'
+    const cid = 'bafkreifjwisqs3xcduq5jgeiikz5x5mwgqhjccgv4bf3gr2gbjmkeg6eda'
+    const cdnUrl = `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}`
+
+    const bskyData = {
+      code: 200,
+      status: { id: 'post1', text: 'Bluesky post title', author: { screen_name: 'user.bsky.social' } },
+      thread: [{ id: 'post1', media: { photos: [{ type: 'photo', url: cdnUrl }] } }],
+    }
+
+    const calledUrls: string[] = []
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      calledUrls.push(url)
+      if (url.includes('api.fxbsky.app/2/thread/user.bsky.social/post1')) {
+        return new Response(JSON.stringify(bskyData), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url === `https://plc.directory/${did}`) {
+        return new Response(
+          JSON.stringify({
+            service: [
+              { id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: 'https://pds.example' },
+            ],
+          }),
+          { status: 200 },
+        )
+      }
+      if (url === `https://pds.example/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`) {
+        return new Response(new Blob(['original'], { type: 'image/jpeg' }), { status: 200 })
+      }
+      return new Response('Not found', { status: 404 })
+    }) as any
+
+    const source = await openThreadProject({
+      type: 'bluesky',
+      handle: 'user.bsky.social',
+      rkey: 'post1',
+    })
+
+    const pages = await source.listPages()
+    expect(pages.map((p) => p.file)).toEqual(['page-01.jpg'])
+    expect(calledUrls).not.toContain(cdnUrl)
+  })
+
+  it('falls back to the direct CDN fetch when PDS resolution fails', async () => {
+    const did = 'did:plc:otafc3kbbjqm72i2yqqrsj43'
+    const cid = 'bafkreifjwisqs3xcduq5jgeiikz5x5mwgqhjccgv4bf3gr2gbjmkeg6eda'
+    const cdnUrl = `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}`
+
+    const bskyData = {
+      code: 200,
+      status: { id: 'post1', text: 'Bluesky post title', author: { screen_name: 'user.bsky.social' } },
+      thread: [{ id: 'post1', media: { photos: [{ type: 'photo', url: cdnUrl }] } }],
+    }
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('api.fxbsky.app/2/thread/user.bsky.social/post1')) {
+        return new Response(JSON.stringify(bskyData), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url === `https://plc.directory/${did}`) {
+        return new Response('Server error', { status: 500 })
+      }
+      if (url === cdnUrl) {
+        return new Response(new Blob(['direct'], { type: 'image/jpeg' }), { status: 200 })
+      }
+      return new Response('Not found', { status: 404 })
+    }) as any
+
+    const source = await openThreadProject({
+      type: 'bluesky',
+      handle: 'user.bsky.social',
+      rkey: 'post1',
+    })
+
+    const pages = await source.listPages()
+    expect(pages.map((p) => p.file)).toEqual(['page-01.jpg'])
+  })
+
+  it('falls back to the image proxy when both PDS and direct fetch fail', async () => {
+    const did = 'did:plc:otafc3kbbjqm72i2yqqrsj43'
+    const cid = 'bafkreifjwisqs3xcduq5jgeiikz5x5mwgqhjccgv4bf3gr2gbjmkeg6eda'
+    const cdnUrl = `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}`
+
+    const bskyData = {
+      code: 200,
+      status: { id: 'post1', text: 'Bluesky post title', author: { screen_name: 'user.bsky.social' } },
+      thread: [{ id: 'post1', media: { photos: [{ type: 'photo', url: cdnUrl }] } }],
+    }
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('api.fxbsky.app/2/thread/user.bsky.social/post1')) {
+        return new Response(JSON.stringify(bskyData), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url === `https://plc.directory/${did}`) {
+        return new Response('Server error', { status: 500 })
+      }
+      if (url === cdnUrl) {
+        throw new TypeError('Failed to fetch')
+      }
+      if (url === `https://wsrv.nl/?url=${encodeURIComponent(cdnUrl)}`) {
+        return new Response(new Blob(['proxied'], { type: 'image/webp' }), { status: 200 })
+      }
+      return new Response('Not found', { status: 404 })
+    }) as any
+
+    const source = await openThreadProject({
+      type: 'bluesky',
+      handle: 'user.bsky.social',
+      rkey: 'post1',
+    })
+
+    const pages = await source.listPages()
+    expect(pages.map((p) => p.file)).toEqual(['page-01.webp'])
+  })
+
   it('throws an error when no images are found in the thread', async () => {
     globalThis.fetch = vi.fn(async () => {
       return new Response(

@@ -68,6 +68,129 @@ export function parseThreadUrl(rawUrl: string): ParsedThread | null {
   return null
 }
 
+/**
+ * Bluesky's image CDN (`cdn.bsky.app`) does not send CORS headers, so a plain
+ * `fetch()` of its URLs fails cross-origin. The same bytes are also served,
+ * with CORS enabled, straight from the post author's own PDS (Personal Data
+ * Server) via the AT Protocol `com.atproto.sync.getBlob` endpoint -- and the
+ * CDN URL already embeds the DID and CID that endpoint needs. This avoids
+ * needing any proxy/backend for the common case.
+ */
+function parseBlueskyCdnUrl(url: string): { did: string; cid: string } | null {
+  const match = url.match(
+    /^https?:\/\/cdn\.bsky\.app\/img\/[^/]+\/plain\/([^/]+)\/([^/@?#]+)/i,
+  )
+  if (!match) return null
+  return { did: match[1]!, cid: match[2]! }
+}
+
+interface DidDocument {
+  service?: Array<{ id?: string; type?: string; serviceEndpoint?: string }>
+}
+
+async function fetchDidDocument(did: string): Promise<DidDocument | null> {
+  let docUrl: string
+  if (did.startsWith('did:plc:')) {
+    docUrl = `https://plc.directory/${did}`
+  } else if (did.startsWith('did:web:')) {
+    const parts = did.slice('did:web:'.length).split(':').map(decodeURIComponent)
+    const domain = parts[0]
+    if (!domain) return null
+    docUrl =
+      parts.length > 1
+        ? `https://${domain}/${parts.slice(1).join('/')}/did.json`
+        : `https://${domain}/.well-known/did.json`
+  } else {
+    return null
+  }
+
+  try {
+    const res = await fetch(docUrl)
+    if (!res.ok) return null
+    return (await res.json()) as DidDocument
+  } catch {
+    return null
+  }
+}
+
+/** Resolves a DID to its PDS host. Results should be cached by the caller. */
+async function resolvePds(did: string): Promise<string | null> {
+  const doc = await fetchDidDocument(did)
+  const pds = doc?.service?.find(
+    (s) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer',
+  )?.serviceEndpoint
+  return pds || null
+}
+
+async function fetchBlueskyBlob(did: string, cid: string, pds: string): Promise<Blob> {
+  const url = `${pds}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(cid)}`
+  const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`getBlob failed (${res.status})`)
+  }
+  return res.blob()
+}
+
+/** Last-resort CORS-enabled image proxy, for a self-hosted PDS with no CORS headers. */
+async function fetchViaImageProxy(url: string): Promise<Blob> {
+  const res = await fetch(`https://wsrv.nl/?url=${encodeURIComponent(url)}`)
+  if (!res.ok) {
+    throw new Error(`Image proxy failed (${res.status})`)
+  }
+  return res.blob()
+}
+
+/**
+ * Downloads a single thread image, trying Bluesky's native PDS blob endpoint
+ * first (to route around cdn.bsky.app's missing CORS headers), then the
+ * direct URL, then a public CORS image proxy as a last resort.
+ */
+async function downloadThreadImage(
+  imgUrl: string,
+  index: number,
+  target: ParsedThread,
+  pdsCache: Map<string, string | null>,
+): Promise<Blob> {
+  if (target.type === 'bluesky') {
+    const parsed = parseBlueskyCdnUrl(imgUrl)
+    if (parsed) {
+      try {
+        let pds = pdsCache.get(parsed.did)
+        if (pds === undefined) {
+          pds = await resolvePds(parsed.did)
+          pdsCache.set(parsed.did, pds)
+        }
+        if (pds) {
+          return await fetchBlueskyBlob(parsed.did, parsed.cid, pds)
+        }
+      } catch {
+        // Fall through to the direct fetch / proxy below.
+      }
+    }
+  }
+
+  let lastError: unknown
+  try {
+    const res = await fetch(imgUrl)
+    if (!res.ok) {
+      throw new Error(`Failed to download image ${index + 1} (${res.status})`)
+    }
+    return await res.blob()
+  } catch (err) {
+    lastError = err
+  }
+
+  if (target.type === 'bluesky') {
+    try {
+      return await fetchViaImageProxy(imgUrl)
+    } catch (err) {
+      lastError = err
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
+}
+
 interface MediaPhoto {
   type?: string
   url?: string
@@ -172,15 +295,12 @@ export async function openThreadProject(
   onProgress?.(`Downloading images (0/${imageUrls.length})…`)
   const width = Math.max(2, String(imageUrls.length).length)
   const files: File[] = []
+  const pdsCache = new Map<string, string | null>()
 
   for (let i = 0; i < imageUrls.length; i++) {
     onProgress?.(`Downloading images (${i + 1}/${imageUrls.length})…`)
     const imgUrl = imageUrls[i]!
-    const imgRes = await fetch(imgUrl)
-    if (!imgRes.ok) {
-      throw new Error(`Failed to download image ${i + 1} (${imgRes.status})`)
-    }
-    const blob = await imgRes.blob()
+    const blob = await downloadThreadImage(imgUrl, i, target, pdsCache)
 
     let ext = extensionFor(blob.type)
     if (!ext) {
