@@ -22,6 +22,17 @@ export interface BlueskyThread {
 
 export type ParsedThread = TwitterThread | BlueskyThread
 
+/**
+ * A stable id for a thread/post, so re-importing the same URL later finds the
+ * translation it already saved instead of starting a new, unreachable project --
+ * the same rationale `fileProjectId` uses for a re-saved file.
+ */
+export function threadProjectId(target: ParsedThread): string {
+  return target.type === 'twitter'
+    ? 'thread:twitter:' + target.id
+    : 'thread:bluesky:' + target.handle + '/' + target.rkey
+}
+
 const TWITTER_WEB =
   /^(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)?(?:twitter\.com|x\.com|fxtwitter\.com|fixupx\.com)\/(?:#!\/)?\w+\/status(?:es)?\/(\d+)/i
 const TWITTER_API =
@@ -183,5 +194,5 @@ export async function openThreadProject(
   }
 
   onProgress?.('Opening project…')
-  return openImagesProject(files, projectName)
+  return openImagesProject(files, projectName, threadProjectId(target))
 }

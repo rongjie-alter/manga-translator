@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fileProjectId, isPdfFile, openFileProject } from '../fs/file-source'
+import { deleteMemoryProject, fileProjectId, isPdfFile, openFileProject, openImagesProject } from '../fs/file-source'
 import { reconcile, readDiskPages } from '../fs/project-file'
 import { FOLDER_JSON_NAME } from '../fs/source'
 import { migrate, newProjectFile } from '../state/schema'
@@ -25,7 +25,7 @@ vi.mock('../fs/pdf', () => ({
   RASTER_VERSION: 'r2',
 }))
 
-import { idbGet, idbSet } from '../fs/idb'
+import { idbDelete, idbGet, idbSet } from '../fs/idb'
 import { getPageBlob, listPageBlobNames, putPageBlob } from '../fs/blob-store'
 import { openPdf } from '../fs/pdf'
 
@@ -50,6 +50,7 @@ beforeEach(() => {
   vi.mocked(getPageBlob).mockReset().mockResolvedValue(undefined)
   vi.mocked(putPageBlob).mockReset().mockResolvedValue(undefined)
   vi.mocked(openPdf).mockReset()
+  vi.mocked(idbDelete).mockReset().mockResolvedValue(undefined)
 })
 
 describe('fileProjectId', () => {
@@ -70,6 +71,40 @@ describe('isPdfFile', () => {
 
   it('does not mistake an image for one', () => {
     expect(isPdfFile(png('a.png'))).toBe(false)
+  })
+})
+
+describe('openImagesProject', () => {
+  it('defaults to a fresh random id on every call', async () => {
+    const a = await openImagesProject([png('a.png')], 'Dropped pages')
+    const b = await openImagesProject([png('a.png')], 'Dropped pages')
+
+    await a.writeJson('{"a":1}')
+    await b.writeJson('{"b":1}')
+
+    const [keyA] = vi.mocked(idbSet).mock.calls[0]!
+    const [keyB] = vi.mocked(idbSet).mock.calls[1]!
+    expect(keyA).not.toBe(keyB)
+  })
+
+  it('reuses the same IndexedDB key when a caller passes an explicit project id', async () => {
+    const a = await openImagesProject([png('p1.jpg')], 'Thread A', 'thread:twitter:1')
+    const b = await openImagesProject([png('p1.jpg')], 'Thread A (refetched)', 'thread:twitter:1')
+
+    await a.writeJson('{"schemaVersion":1}')
+    await b.writeJson('{"schemaVersion":1}')
+
+    const [keyA] = vi.mocked(idbSet).mock.calls[0]!
+    const [keyB] = vi.mocked(idbSet).mock.calls[1]!
+    expect(keyA).toBe(keyB)
+    expect(keyA).toBe('project:thread:twitter:1')
+  })
+})
+
+describe('deleteMemoryProject', () => {
+  it('deletes the saved translation under the project key', async () => {
+    await deleteMemoryProject('thread:twitter:1')
+    expect(idbDelete).toHaveBeenCalledWith('project:thread:twitter:1')
   })
 })
 

@@ -14,7 +14,8 @@ vi.mock('../fs/blob-store', () => ({
   clearPageBlobs: vi.fn(),
 }))
 
-import { openThreadProject, parseThreadUrl } from '../fs/thread-project'
+import { openThreadProject, parseThreadUrl, threadProjectId } from '../fs/thread-project'
+import { idbSet } from '../fs/idb'
 
 describe('parseThreadUrl', () => {
   describe('Twitter / X URLs', () => {
@@ -124,6 +125,29 @@ describe('parseThreadUrl', () => {
   })
 })
 
+describe('threadProjectId', () => {
+  it('is the same for the same tweet, so re-importing finds the same translation', () => {
+    expect(threadProjectId({ type: 'twitter', id: '100' })).toBe(
+      threadProjectId({ type: 'twitter', id: '100' }),
+    )
+  })
+
+  it('is the same for the same bluesky post', () => {
+    expect(
+      threadProjectId({ type: 'bluesky', handle: 'user.bsky.social', rkey: 'post1' }),
+    ).toBe(threadProjectId({ type: 'bluesky', handle: 'user.bsky.social', rkey: 'post1' }))
+  })
+
+  it('differs across tweets, posts, and thread types', () => {
+    const twitter100 = threadProjectId({ type: 'twitter', id: '100' })
+    const twitter101 = threadProjectId({ type: 'twitter', id: '101' })
+    const bsky = threadProjectId({ type: 'bluesky', handle: 'user.bsky.social', rkey: 'post1' })
+
+    expect(twitter100).not.toBe(twitter101)
+    expect(twitter100).not.toBe(bsky)
+  })
+})
+
 describe('openThreadProject', () => {
   const originalFetch = globalThis.fetch
 
@@ -194,6 +218,38 @@ describe('openThreadProject', () => {
     expect(pages.map((p) => p.file)).toEqual(['page-01.jpg', 'page-02.png', 'page-03.jpg'])
     expect(progress).toContain('Fetching thread…')
     expect(progress).toContain('Downloading images (3/3)…')
+  })
+
+  it('re-importing the same tweet reuses the same saved-translation key', async () => {
+    const singlePhotoThread = {
+      code: 200,
+      status: {
+        id: '100',
+        text: 'A tweet',
+        author: { name: 'Artist', screen_name: 'artist_x' },
+        media: { photos: [{ type: 'photo', url: 'https://pbs.twimg.com/p1.jpg' }] },
+      },
+    }
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('api.fxtwitter.com/2/thread/100')) {
+        return new Response(JSON.stringify(singlePhotoThread), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(new Blob(['img'], { type: 'image/jpeg' }), { status: 200 })
+    }) as any
+
+    vi.mocked(idbSet).mockClear()
+    const first = await openThreadProject({ type: 'twitter', id: '100' })
+    const second = await openThreadProject({ type: 'twitter', id: '100' })
+    await first.writeJson('{"schemaVersion":1}')
+    await second.writeJson('{"schemaVersion":1}')
+
+    const [keyFirst] = vi.mocked(idbSet).mock.calls[0]!
+    const [keySecond] = vi.mocked(idbSet).mock.calls[1]!
+    expect(keyFirst).toBe(keySecond)
   })
 
   it('unrolls a Bluesky thread and extracts photos', async () => {

@@ -145,6 +145,39 @@ export async function closeProject(): Promise<void> {
   store.set({ source: null, project: null, report: null, dirty: false, run: idleRun() })
 }
 
+// -- session-only projects ---------------------------------------------------
+
+/**
+ * A project whose pages live only in memory (e.g. a thread import) has nothing
+ * else keeping it alive once another project takes over the single active slot
+ * above. This registry keeps a reference around for the life of the tab, so
+ * switching projects does not throw the previous one's images away -- reload
+ * clears it naturally, since it is nothing but a module-level map.
+ */
+export interface SessionProjectEntry {
+  projectId: string
+  name: string
+  source: ProjectSource
+}
+
+const sessionProjects = new Map<string, SessionProjectEntry>()
+
+export function registerSessionProject(projectId: string, name: string, source: ProjectSource): void {
+  sessionProjects.set(projectId, { projectId, name, source })
+}
+
+export function getSessionProject(projectId: string): SessionProjectEntry | undefined {
+  return sessionProjects.get(projectId)
+}
+
+export function listSessionProjects(): SessionProjectEntry[] {
+  return [...sessionProjects.values()]
+}
+
+export function forgetSessionProject(projectId: string): void {
+  sessionProjects.delete(projectId)
+}
+
 /**
  * Read a page image from the source.
  *

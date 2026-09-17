@@ -10,13 +10,24 @@ import {
 } from '../fs/handles'
 import type { RememberedProject } from '../fs/handles'
 import { projectSourceFromDrop } from '../fs/drop-project'
-import { openThreadProject, parseThreadUrl } from '../fs/thread-project'
-import { closeProject, openSource, useStore } from '../state/store'
+import { deleteMemoryProject } from '../fs/file-source'
+import { openThreadProject, parseThreadUrl, threadProjectId } from '../fs/thread-project'
+import {
+  closeProject,
+  forgetSessionProject,
+  getSessionProject,
+  listSessionProjects,
+  openSource,
+  registerSessionProject,
+  useStore,
+  type SessionProjectEntry,
+} from '../state/store'
 import { Banner } from './common'
 
 export function ProjectsView() {
   const { project, source } = useStore()
   const [recent, setRecent] = useState<RememberedProject[]>([])
+  const [sessionEntries, setSessionEntries] = useState<SessionProjectEntry[]>([])
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const [progress, setProgress] = useState<string | null>(null)
@@ -26,6 +37,7 @@ export function ProjectsView() {
 
   useEffect(() => {
     void listRememberedProjects().then(setRecent)
+    setSessionEntries(listSessionProjects())
   }, [project])
 
   /**
@@ -64,7 +76,26 @@ export function ProjectsView() {
       setProblem('Please enter a valid Twitter/X or Bluesky thread URL.')
       return
     }
-    await open(() => openThreadProject(target, setProgress))
+    const projectId = threadProjectId(target)
+    await open(async () => {
+      const cached = getSessionProject(projectId)
+      if (cached) return cached.source
+      const next = await openThreadProject(target, setProgress)
+      registerSessionProject(projectId, next.name, next)
+      setSessionEntries(listSessionProjects())
+      return next
+    })
+  }
+
+  async function openSessionEntry(entry: SessionProjectEntry) {
+    await open(() => Promise.resolve(entry.source))
+  }
+
+  async function deleteSessionEntry(entry: SessionProjectEntry) {
+    if (source === entry.source) await closeProject()
+    forgetSessionProject(entry.projectId)
+    await deleteMemoryProject(entry.projectId)
+    setSessionEntries(listSessionProjects())
   }
 
   // A whole-page drop target: a folder, loose images, or a PDF dropped anywhere on
@@ -228,6 +259,39 @@ export function ProjectsView() {
               Close
             </button>
           </div>
+        </div>
+      )}
+
+      {sessionEntries.filter((entry) => entry.source !== source).length > 0 && (
+        <div class="card">
+          <h2>This session</h2>
+          <p class="muted" style="margin-top:-4px">
+            Imported threads keep their pages in this tab's memory, not saved to disk
+            — reopen, translate, and export before you reload this page.
+          </p>
+          <table class="table">
+            <tbody>
+              {sessionEntries
+                .filter((entry) => entry.source !== source)
+                .map((entry) => (
+                  <tr key={entry.projectId}>
+                    <td>{entry.name}</td>
+                    <td style="width:1%;white-space:nowrap">
+                      <button
+                        class="small"
+                        disabled={busy}
+                        onClick={() => void openSessionEntry(entry)}
+                      >
+                        Open
+                      </button>{' '}
+                      <button class="small" onClick={() => void deleteSessionEntry(entry)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
         </div>
       )}
 

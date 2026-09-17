@@ -4,9 +4,13 @@ import {
   canAddImages,
   cancelRun,
   closeProject,
+  forgetSessionProject,
+  getSessionProject,
   hasPageBlob,
   installUnloadGuard,
+  listSessionProjects,
   openSource,
+  registerSessionProject,
   saveNow,
   startRun,
   store,
@@ -800,5 +804,45 @@ describe('canAddImages', () => {
       }),
     )
     expect(canAddImages()).toBe(true)
+  })
+})
+
+describe('session projects', () => {
+  afterEach(() => {
+    for (const entry of listSessionProjects()) forgetSessionProject(entry.projectId)
+  })
+
+  it('remembers a registered project by id', () => {
+    const source = fakeSource({ name: 'Thread A' })
+    registerSessionProject('thread:twitter:1', 'Thread A', source)
+
+    expect(getSessionProject('thread:twitter:1')).toEqual({
+      projectId: 'thread:twitter:1',
+      name: 'Thread A',
+      source,
+    })
+  })
+
+  it('keeps an earlier project reachable after a later one is registered', () => {
+    const first = fakeSource({ name: 'Thread A' })
+    const second = fakeSource({ name: 'Thread B' })
+    registerSessionProject('thread:twitter:1', 'Thread A', first)
+    registerSessionProject('thread:twitter:2', 'Thread B', second)
+
+    expect(listSessionProjects().map((e) => e.projectId).sort()).toEqual([
+      'thread:twitter:1',
+      'thread:twitter:2',
+    ])
+    expect(getSessionProject('thread:twitter:1')?.source).toBe(first)
+  })
+
+  it('returns undefined for an id that was never registered', () => {
+    expect(getSessionProject('nope')).toBeUndefined()
+  })
+
+  it('drops an entry once forgotten', () => {
+    registerSessionProject('thread:twitter:1', 'Thread A', fakeSource())
+    forgetSessionProject('thread:twitter:1')
+    expect(getSessionProject('thread:twitter:1')).toBeUndefined()
   })
 })

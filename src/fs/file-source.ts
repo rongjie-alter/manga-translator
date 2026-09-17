@@ -13,7 +13,7 @@
  */
 
 import { getPageBlob, listPageBlobNames, putPageBlob } from './blob-store'
-import { idbGet, idbSet } from './idb'
+import { idbDelete, idbGet, idbSet } from './idb'
 import { hashFile } from './images'
 import {
   jsonNameForFile,
@@ -158,18 +158,33 @@ export async function openFileProject(file: File): Promise<ProjectSource> {
 }
 
 /**
- * Turn a set of loose dropped images into a project, with no folder or file of
- * their own to be named or keyed after.
+ * Turn a set of images into a project, with no folder or file of their own to be
+ * named or keyed after.
  *
- * Unlike `openFileProject`, there is nothing stable to key the project on -- these
- * files have no shared identity to reopen against -- so each drop is its own project,
- * same as a single image picked through the file-input fallback (also never
- * remembered under "Recent").
+ * For a loose drop there is nothing stable to key the project on -- the files have
+ * no shared identity to reopen against -- so by default each call gets a fresh
+ * random id and is its own project, same as a single image picked through the
+ * file-input fallback (also never remembered under "Recent"). A caller that *does*
+ * have a stable identity for the set (a thread or post URL, say) can pass its own
+ * `projectId` so re-opening it later finds the same saved translation again --
+ * see `thread-project.ts`.
  */
-export async function openImagesProject(files: File[], name: string): Promise<ProjectSource> {
-  const projectId = 'drop:' + crypto.randomUUID()
+export async function openImagesProject(
+  files: File[],
+  name: string,
+  projectId: string = 'drop:' + crypto.randomUUID(),
+): Promise<ProjectSource> {
   requestDurableStorage()
   return new MemoryProjectSource(name, projectId, await imagePages(files))
+}
+
+/**
+ * Delete a memory-backed project's saved translation, e.g. when the user asks to
+ * forget a thread import from the session list. Pages themselves are never
+ * persisted for this kind of project, so there is nothing else to clean up.
+ */
+export function deleteMemoryProject(projectId: string): Promise<void> {
+  return idbDelete(projectKey(projectId))
 }
 
 /**
