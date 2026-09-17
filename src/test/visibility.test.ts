@@ -137,4 +137,49 @@ describe('observeOnce', () => {
     expect(onVisible).toHaveBeenCalledOnce()
     expect(() => teardown()).not.toThrow()
   })
+
+  it('resolves immediately, without waiting for the observer, when already laid out on screen', () => {
+    withObserver()
+    const onVisible = vi.fn()
+    const el = element()
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+      width: 100,
+      height: 100,
+      top: 10,
+      bottom: 110,
+      left: 0,
+      right: 100,
+      x: 0,
+      y: 10,
+      toJSON: () => ({}),
+    })
+
+    observeOnce(el, onVisible)
+
+    expect(onVisible).toHaveBeenCalledOnce()
+    expect(StubObserver.last).toBeNull()
+  })
+
+  it('does not resolve immediately when the laid-out element is far outside the viewport', () => {
+    withObserver()
+    const onVisible = vi.fn()
+    const el = element()
+    const far = window.innerHeight * 3
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({
+      width: 100,
+      height: 100,
+      top: far,
+      bottom: far + 100,
+      left: 0,
+      right: 100,
+      x: 0,
+      y: far,
+      toJSON: () => ({}),
+    })
+
+    observeOnce(el, onVisible)
+
+    expect(onVisible).not.toHaveBeenCalled()
+    expect(StubObserver.last!.observed).toHaveLength(1)
+  })
 })

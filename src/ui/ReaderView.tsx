@@ -14,6 +14,17 @@ const WINDOW_BEFORE = 2
 const WINDOW_AFTER = 4
 
 /**
+ * Which page counts as "current" when several are intersecting at once (e.g. the
+ * very first observer callback after mount, which can report every spread within
+ * the lead-in margin as intersecting in one batch): the topmost one, since reading
+ * order is top-to-bottom.
+ */
+export function currentPageFrom(intersecting: ReadonlySet<number>): number | undefined {
+  if (intersecting.size === 0) return undefined
+  return Math.min(...intersecting)
+}
+
+/**
  * Last-read page, kept in memory only (not the project JSON -- it's UI state, not
  * something a shared folder should carry). Views unmount on navigation, so this is
  * what survives switching to Settings and back instead of resetting to page 1.
@@ -39,13 +50,17 @@ export function ReaderView() {
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
+    const intersecting = new Set<number>()
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (!entry.isIntersecting) continue
           const index = Number((entry.target as HTMLElement).dataset['index'])
-          if (Number.isFinite(index)) setVisible(index)
+          if (!Number.isFinite(index)) continue
+          if (entry.isIntersecting) intersecting.add(index)
+          else intersecting.delete(index)
         }
+        const current = currentPageFrom(intersecting)
+        if (current !== undefined) setVisible(current)
       },
       { rootMargin: '200px 0px', threshold: 0.01 },
     )

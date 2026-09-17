@@ -34,6 +34,26 @@ export function observeOnce(
     return () => undefined
   }
 
+  // An element already on screen at the moment observation starts should not have
+  // to wait for the observer's first callback: inside a `content-visibility: auto`
+  // ancestor (see the `.spread`/`.page-card` comment in styles.css), that first
+  // callback can report "not intersecting" -- or never arrive -- until a later
+  // layout pass (e.g. a scroll) re-checks relevance, even though the element is
+  // genuinely visible right now. `getBoundingClientRect()` forces a real layout
+  // read regardless of that skipped-subtree state, so it gives an accurate answer
+  // immediately. Guarded on a non-zero rect so this has no effect on a detached or
+  // not-yet-laid-out element -- which is exactly the case in tests, where happy-dom
+  // always reports an all-zero rect and every existing observer-driven assertion
+  // below is unaffected.
+  const rect = el.getBoundingClientRect()
+  if (rect.width > 0 || rect.height > 0) {
+    const margin = window.innerHeight
+    if (rect.bottom >= -margin && rect.top <= window.innerHeight + margin) {
+      onVisible()
+      return () => undefined
+    }
+  }
+
   // `disconnect()` stops future notifications but does not unqueue one already
   // dispatched, so "once" is enforced here rather than left to the observer.
   let done = false

@@ -508,6 +508,12 @@ label {
   background: #0d0f13;
 }
 
+/* Same idea as `.page-card .page-placeholder`: don't collapse to the generic
+ * fallback height while the image is still loading. */
+.spread .page-placeholder {
+  min-height: 400px;
+}
+
 .spread .panel {
   position: sticky;
   top: 70px;
