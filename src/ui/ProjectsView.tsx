@@ -231,6 +231,7 @@ export function ProjectsView() {
                 }
               }}
               style="flex:1"
+              autocomplete="off"
             />
             <button
               disabled={busy || !threadUrl.trim()}
