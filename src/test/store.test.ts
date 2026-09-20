@@ -4,6 +4,7 @@ import {
   canAddImages,
   cancelRun,
   closeProject,
+  DUPLICATE_IMAGE_REASON,
   forgetSessionProject,
   getSessionProject,
   hasPageBlob,
@@ -755,6 +756,29 @@ describe('addImages', () => {
 
     const files = store.get().project!.pages.map((p) => p.file)
     expect(files.filter((f) => f === 'p003.png')).toHaveLength(1)
+  })
+
+  it('skips an image whose content already matches a page in the project', async () => {
+    const { source } = addableSource()
+    await openWith(source)
+
+    await addImages([png('same')])
+    const result = await addImages([png('same')])
+
+    expect(result.added).toEqual([])
+    expect(result.skipped).toEqual([{ type: 'image/png', reason: DUPLICATE_IMAGE_REASON }])
+    expect(store.get().project!.pages).toHaveLength(3)
+  })
+
+  it('skips a duplicate within the same batch, keeping the first copy', async () => {
+    const { source } = addableSource()
+    await openWith(source)
+
+    const result = await addImages([png('same'), png('same'), png('different')])
+
+    expect(result.added).toEqual(['p003.png', 'p004.png'])
+    expect(result.skipped).toEqual([{ type: 'image/png', reason: DUPLICATE_IMAGE_REASON }])
+    expect(store.get().project!.pages).toHaveLength(4)
   })
 
   it('persists the addition even when a save is already in flight', async () => {

@@ -2,11 +2,38 @@ import { navigate } from '../app'
 import { saveImagesToFolder, type CopyProgress } from '../fs/export'
 import { isFsaSupported } from '../fs/handles'
 import { FOLDER_JSON_NAME } from '../fs/source'
+import { fetchThreadImages, parseThreadUrl } from '../fs/thread-project'
 import { orderedPages, type Page } from '../state/schema'
-import { addImages, openSource, saveNow, updateProject, useStore } from '../state/store'
+import {
+  addImages,
+  DUPLICATE_IMAGE_REASON,
+  openSource,
+  saveNow,
+  updateProject,
+  useStore,
+} from '../state/store'
 import { Banner, PageImage, StatusDot, clamp, countByStatus } from './common'
 import { describeRejection, imagesFrom, isEditable } from './incoming'
 import { useEffect, useRef, useState } from 'preact/hooks'
+
+/**
+ * Splits `addImages`' `skipped` list into an informational note about images that were
+ * silently deduplicated (expected, not a problem -- see `DUPLICATE_IMAGE_REASON`) and a
+ * warning about anything that failed for a real reason.
+ */
+function describeSkipped(
+  skipped: { type: string; reason: string }[],
+): { note: string | null; problem: string | null } {
+  const duplicates = skipped.filter((s) => s.reason === DUPLICATE_IMAGE_REASON)
+  const other = skipped.filter((s) => s.reason !== DUPLICATE_IMAGE_REASON)
+  return {
+    note: duplicates.length > 0 ? `Skipped ${duplicates.length} image(s) already in the project.` : null,
+    problem:
+      other.length > 0
+        ? `Could not add ${other.length} image(s): ` + other.map((s) => s.reason).join('; ')
+        : null,
+  }
+}
 
 export function ScanView() {
   const { project, source, report } = useStore()
@@ -42,6 +69,8 @@ export function ScanView() {
       <PdfResolutionCard />
 
       <AddPagesCard />
+
+      <AddThreadCard />
 
       <div class="card">
         <div class="row">
@@ -117,15 +146,14 @@ function AddPagesCard() {
     setProblem(null)
     try {
       const result = await addImages(blobs)
+      const { note: dupNote, problem } = describeSkipped(result.skipped)
+      const notes: string[] = []
       if (result.added.length > 0) {
-        setNote(`Added ${result.added.length} page(s): ${result.added.join(', ')}`)
+        notes.push(`Added ${result.added.length} page(s): ${result.added.join(', ')}`)
       }
-      if (result.skipped.length > 0) {
-        setProblem(
-          `Could not add ${result.skipped.length} image(s): ` +
-            result.skipped.map((s) => s.reason).join('; '),
-        )
-      }
+      if (dupNote) notes.push(dupNote)
+      if (notes.length > 0) setNote(notes.join(' '))
+      if (problem) setProblem(problem)
     } catch (err) {
       setProblem(err instanceof Error ? err.message : String(err))
     } finally {
@@ -211,6 +239,97 @@ function AddPagesCard() {
         />
         <button disabled={busy} onClick={() => input.current?.click()}>
           Add images…
+        </button>
+      </div>
+      {note && (
+        <p class="muted" style="margin-bottom:0">
+          {note}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Manual fallback for a thread the automatic chase (`fetchThreadImages`) couldn't fully
+ * unroll on its own -- e.g. a creator forced to start a new root tweet mid-series because
+ * of X's reply-depth limit. Paste that tweet's (or a Bluesky post's) URL and its images
+ * are appended as more pages, the same way pasted/dropped images are.
+ *
+ * Gated on `source.addImage` existing rather than `startedFromClipboard` like
+ * `AddPagesCard`: appending thread images is useful for any writable project, not just
+ * ones that started from a clipboard paste.
+ */
+function AddThreadCard() {
+  const { source } = useStore()
+  const [url, setUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  if (!source?.addImage) return null
+
+  async function importThread() {
+    const target = parseThreadUrl(url)
+    if (!target) {
+      setProblem('Please enter a valid Twitter/X or Bluesky thread URL.')
+      return
+    }
+    setBusy(true)
+    setProblem(null)
+    setNote(null)
+    try {
+      const { files } = await fetchThreadImages(target, setProgress)
+      const result = await addImages(files)
+      const { note: dupNote, problem } = describeSkipped(result.skipped)
+      const notes: string[] = []
+      if (result.added.length > 0) notes.push(`Added ${result.added.length} page(s) from thread.`)
+      if (dupNote) notes.push(dupNote)
+      if (notes.length > 0) setNote(notes.join(' '))
+      if (problem) setProblem(problem)
+      setUrl('')
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+      setProgress(null)
+    }
+  }
+
+  return (
+    <div class="card">
+      <h2>Add thread</h2>
+      <p class="muted" style="margin-top:-6px">
+        For a thread split across a new root tweet -- X's reply-depth limit sometimes
+        forces this -- paste that tweet's URL to pull its images in as more pages.
+        Images already in the project (the thread-unrolling API isn't always
+        consistent about how much of a thread it returns) are skipped automatically.
+      </p>
+      {problem && <Banner kind="warn">{problem}</Banner>}
+      <div class="row" style="gap:8px">
+        <input
+          id="add-thread-url-input"
+          type="url"
+          placeholder="https://x.com/.../status/... or https://bsky.app/profile/.../post/..."
+          value={url}
+          disabled={busy}
+          onInput={(e) => setUrl((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && url.trim() && !busy) {
+              e.preventDefault()
+              void importThread()
+            }
+          }}
+          style="flex:1"
+          autocomplete="off"
+        />
+        <button
+          disabled={busy || !url.trim()}
+          onClick={() => void importThread()}
+          style="white-space:nowrap"
+        >
+          {busy && progress ? progress : 'Add thread pages'}
         </button>
       </div>
       {note && (

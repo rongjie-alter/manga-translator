@@ -33,6 +33,14 @@ export function threadProjectId(target: ParsedThread): string {
     : 'thread:bluesky:' + target.handle + '/' + target.rkey
 }
 
+/**
+ * Bound on how many continuation fetches `fetchFullThread` will issue when chasing a
+ * thread that keeps growing, and on the total posts it will collect -- belt-and-suspenders
+ * against a runaway loop if the chaining heuristic below ever misbehaves.
+ */
+const MAX_CHAIN_ITERATIONS = 20
+const MAX_THREAD_POSTS = 50
+
 const TWITTER_WEB =
   /^(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)?(?:twitter\.com|x\.com|fxtwitter\.com|fixupx\.com)\/(?:#!\/)?\w+\/status(?:es)?\/(\d+)/i
 const TWITTER_API =
@@ -198,6 +206,7 @@ interface MediaPhoto {
 
 interface ThreadPost {
   id?: string
+  url?: string
   text?: string
   author?: {
     name?: string
@@ -220,21 +229,15 @@ interface ThreadApiResponse {
   }
 }
 
-/**
- * Fetch thread metadata, download all attached images, and create a project source.
- */
-export async function openThreadProject(
-  target: ParsedThread,
-  onProgress?: (status: string) => void,
-): Promise<ProjectSource> {
-  onProgress?.('Fetching thread…')
+function apiUrlFor(target: ParsedThread): string {
+  return target.type === 'twitter'
+    ? `https://api.fxtwitter.com/2/thread/${target.id}`
+    : `https://api.fxbsky.app/2/thread/${encodeURIComponent(target.handle)}/${encodeURIComponent(target.rkey)}`
+}
 
-  const apiUrl =
-    target.type === 'twitter'
-      ? `https://api.fxtwitter.com/2/thread/${target.id}`
-      : `https://api.fxbsky.app/2/thread/${encodeURIComponent(target.handle)}/${encodeURIComponent(target.rkey)}`
-
-  const res = await fetch(apiUrl)
+/** Issues the single underlying API fetch. The only step allowed to throw. */
+async function fetchThreadJson(target: ParsedThread): Promise<ThreadApiResponse> {
+  const res = await fetch(apiUrlFor(target))
   if (!res.ok) {
     let message = `Failed to fetch thread (${res.status} ${res.statusText})`
     try {
@@ -250,13 +253,78 @@ export async function openThreadProject(
   if (data.code && data.code !== 200) {
     throw new Error(data.message || `API error code ${data.code}`)
   }
+  return data
+}
 
-  const posts =
-    Array.isArray(data.thread) && data.thread.length > 0
-      ? data.thread
-      : data.status
-        ? [data.status]
-        : []
+function extractThreadPosts(data: ThreadApiResponse): ThreadPost[] {
+  return Array.isArray(data.thread) && data.thread.length > 0
+    ? data.thread
+    : data.status
+      ? [data.status]
+      : []
+}
+
+/**
+ * The thread API returns a windowed slice of the self-reply chain anchored on
+ * whichever post id was queried, not the whole thread -- confirmed empirically: querying
+ * post 1 of a 14-post thread returns only posts 1-7, but re-querying anchored on post 7
+ * (the last post of that response) returns 1-8, then anchored on 8 returns 1-13, then on
+ * 13 returns all 14. So we keep re-querying anchored on the last post's own URL until the
+ * response stops growing.
+ *
+ * Each response is a full replacement of `posts`, never a merge -- every response is
+ * anchored back to post 1, so a longer response is simply adopted as-is.
+ */
+async function fetchFullThread(
+  target: ParsedThread,
+  onProgress?: (status: string) => void,
+): Promise<{ firstData: ThreadApiResponse; posts: ThreadPost[] }> {
+  const firstData = await fetchThreadJson(target)
+  let posts = extractThreadPosts(firstData)
+  const seen = new Set<string>([threadProjectId(target)])
+
+  for (let i = 0; i < MAX_CHAIN_ITERATIONS && posts.length < MAX_THREAD_POSTS; i++) {
+    const last = posts[posts.length - 1]
+    if (!last?.url) break
+
+    const nextAnchor = parseThreadUrl(last.url)
+    if (!nextAnchor) break
+
+    const nextKey = threadProjectId(nextAnchor)
+    if (seen.has(nextKey)) break
+    seen.add(nextKey)
+
+    onProgress?.(`Fetching more of thread (${posts.length} posts so far)…`)
+
+    let nextData: ThreadApiResponse
+    try {
+      nextData = await fetchThreadJson(nextAnchor)
+    } catch {
+      // The first fetch already succeeded -- a flaky continuation should not
+      // throw away the pages already found, so stop chaining and use what we have.
+      break
+    }
+
+    const nextPosts = extractThreadPosts(nextData)
+    if (nextPosts.length <= posts.length) break
+    posts = nextPosts
+  }
+
+  return { firstData, posts }
+}
+
+/**
+ * Fetch thread metadata (chasing continuations, see `fetchFullThread`) and download all
+ * attached images, without opening a project -- shared by `openThreadProject` (new
+ * project) and the Scan view's "Add thread" fallback (append to an existing project).
+ */
+export async function fetchThreadImages(
+  target: ParsedThread,
+  onProgress?: (status: string) => void,
+): Promise<{ files: File[]; projectName: string }> {
+  onProgress?.('Fetching thread…')
+
+  const { firstData: data, posts } = await fetchFullThread(target, onProgress)
 
   const imageUrls: string[] = []
   for (const post of posts) {
@@ -313,6 +381,17 @@ export async function openThreadProject(
     files.push(new File([blob], fileName, { type: blob.type || 'image/jpeg' }))
   }
 
+  return { files, projectName }
+}
+
+/**
+ * Fetch thread metadata, download all attached images, and create a project source.
+ */
+export async function openThreadProject(
+  target: ParsedThread,
+  onProgress?: (status: string) => void,
+): Promise<ProjectSource> {
+  const { files, projectName } = await fetchThreadImages(target, onProgress)
   onProgress?.('Opening project…')
   return openImagesProject(files, projectName, threadProjectId(target))
 }

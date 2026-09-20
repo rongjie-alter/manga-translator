@@ -14,7 +14,12 @@ vi.mock('../fs/blob-store', () => ({
   clearPageBlobs: vi.fn(),
 }))
 
-import { openThreadProject, parseThreadUrl, threadProjectId } from '../fs/thread-project'
+import {
+  fetchThreadImages,
+  openThreadProject,
+  parseThreadUrl,
+  threadProjectId,
+} from '../fs/thread-project'
 import { idbSet } from '../fs/idb'
 
 describe('parseThreadUrl', () => {
@@ -475,5 +480,208 @@ describe('openThreadProject', () => {
     await expect(openThreadProject({ type: 'twitter', id: '100' })).rejects.toThrow(
       'Failed to download image 1 (500)',
     )
+  })
+
+  // The real fxtwitter/fxbsky thread endpoint returns a windowed slice of the self-reply
+  // chain anchored on whichever post id is queried, not the whole thread -- confirmed by
+  // querying the live API for a real 14-post thread: anchoring on post 1 returned only
+  // posts 1-7, anchoring on post 7 (the last post of that response) returned 1-8,
+  // anchoring on 8 returned 1-13, and anchoring on 13 returned all 14. These tests mimic
+  // that windowing behavior to exercise the chase-the-last-post's-own-URL loop.
+  describe('thread chaining', () => {
+    function twitterPost(id: number, extra: Record<string, unknown> = {}) {
+      return {
+        id: String(id),
+        url: `https://x.com/artist/status/${id}`,
+        text: `Post ${id}`,
+        ...extra,
+      }
+    }
+
+    it('chains through growing windows until the thread stops growing', async () => {
+      // anchor 1 -> 1-7, anchor 7 -> 1-8, anchor 8 -> 1-13, anchor 13 -> 1-14 (converged:
+      // post 14's own URL is a never-before-seen anchor, so one extra no-growth fetch on
+      // anchor 14 confirms convergence before the loop stops).
+      const windows: Record<number, number> = { 1: 7, 7: 8, 8: 13, 13: 14, 14: 14 }
+      const threadCalls: number[] = []
+
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        const m = url.match(/api\.fxtwitter\.com\/2\/thread\/(\d+)/)
+        if (m) {
+          const anchor = Number(m[1])
+          threadCalls.push(anchor)
+          const upTo = windows[anchor]!
+          const posts = Array.from({ length: upTo }, (_, i) =>
+            twitterPost(i + 1, i === 0 ? { media: { photos: [{ type: 'photo', url: 'https://pbs.twimg.com/p1.jpg' }] } } : {}),
+          )
+          return new Response(
+            JSON.stringify({ code: 200, status: posts[anchor - 1], thread: posts }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(new Blob(['img'], { type: 'image/jpeg' }), { status: 200 })
+      }) as any
+
+      const source = await openThreadProject({ type: 'twitter', id: '1' })
+      const pages = await source.listPages()
+      expect(pages).toHaveLength(1) // only post 1 carries a photo in this fixture
+      expect(threadCalls).toEqual([1, 7, 8, 13, 14])
+    })
+
+    it('names the project from the first response, not the final chained anchor', async () => {
+      const windows: Record<number, { upTo: number; text: string; handle: string }> = {
+        1: { upTo: 2, text: 'Original opening post', handle: 'author_one' },
+        2: { upTo: 2, text: 'Post 2 own text', handle: 'author_one' },
+      }
+
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        const m = url.match(/api\.fxtwitter\.com\/2\/thread\/(\d+)/)
+        if (m) {
+          const anchor = Number(m[1])
+          const w = windows[anchor]!
+          const posts = Array.from({ length: w.upTo }, (_, i) =>
+            twitterPost(i + 1, i === 0 ? { media: { photos: [{ type: 'photo', url: 'https://pbs.twimg.com/p1.jpg' }] } } : {}),
+          )
+          return new Response(
+            JSON.stringify({
+              code: 200,
+              status: { id: String(anchor), text: w.text, author: { screen_name: w.handle } },
+              thread: posts,
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(new Blob(['img'], { type: 'image/jpeg' }), { status: 200 })
+      }) as any
+
+      const source = await openThreadProject({ type: 'twitter', id: '1' })
+      expect(source.name).toBe('@author_one - Original opening post')
+    })
+
+    it('keeps pages already found when a continuation fetch fails', async () => {
+      let anchor7Attempts = 0
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('api.fxtwitter.com/2/thread/1')) {
+          const posts = Array.from({ length: 7 }, (_, i) =>
+            twitterPost(i + 1, i === 0 ? { media: { photos: [{ type: 'photo', url: 'https://pbs.twimg.com/p1.jpg' }] } } : {}),
+          )
+          return new Response(
+            JSON.stringify({ code: 200, status: posts[0], thread: posts }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        if (url.includes('api.fxtwitter.com/2/thread/7')) {
+          anchor7Attempts++
+          return new Response('Server error', { status: 500 })
+        }
+        return new Response(new Blob(['img'], { type: 'image/jpeg' }), { status: 200 })
+      }) as any
+
+      const source = await openThreadProject({ type: 'twitter', id: '1' })
+      const pages = await source.listPages()
+      expect(pages).toHaveLength(1)
+      expect(anchor7Attempts).toBe(1)
+    })
+
+    it('stops immediately when a single post links back to itself', async () => {
+      const threadCalls: string[] = []
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('api.fxtwitter.com/2/thread/100')) {
+          threadCalls.push(url)
+          const post = twitterPost(100, {
+            media: { photos: [{ type: 'photo', url: 'https://pbs.twimg.com/p1.jpg' }] },
+          })
+          return new Response(
+            JSON.stringify({ code: 200, status: post, thread: [post] }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(new Blob(['img'], { type: 'image/jpeg' }), { status: 200 })
+      }) as any
+
+      await fetchThreadImages({ type: 'twitter', id: '100' })
+      expect(threadCalls).toHaveLength(1)
+    })
+
+    it('stops after a bounded number of continuations against a thread that never stops growing', async () => {
+      const threadCalls: number[] = []
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        const m = url.match(/api\.fxtwitter\.com\/2\/thread\/(\d+)/)
+        if (m) {
+          const anchor = Number(m[1])
+          threadCalls.push(anchor)
+          // Anchoring on N always returns posts 1..N+1 -- a window that keeps growing
+          // forever, exercising the MAX_CHAIN_ITERATIONS safety cap.
+          const posts = Array.from({ length: anchor + 1 }, (_, i) =>
+            twitterPost(i + 1, i === 0 ? { media: { photos: [{ type: 'photo', url: 'https://pbs.twimg.com/p1.jpg' }] } } : {}),
+          )
+          return new Response(
+            JSON.stringify({ code: 200, status: posts[posts.length - 1], thread: posts }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(new Blob(['img'], { type: 'image/jpeg' }), { status: 200 })
+      }) as any
+
+      const { files } = await fetchThreadImages({ type: 'twitter', id: '1' })
+      expect(files).toHaveLength(1)
+      // 1 initial fetch + at most MAX_CHAIN_ITERATIONS (20) continuations.
+      expect(threadCalls.length).toBe(21)
+    })
+
+    it('chains a Bluesky thread the same way, using each post\'s own url', async () => {
+      const bskyPost = (rkey: string, url: string, extra: Record<string, unknown> = {}) => ({
+        id: rkey,
+        url,
+        text: `Post ${rkey}`,
+        ...extra,
+      })
+      const post1 = bskyPost('post1', 'https://bsky.app/profile/user.bsky.social/post/post1', {
+        media: { photos: [{ type: 'photo', url: 'https://cdn.bsky.app/img1' }] },
+      })
+      const post2 = bskyPost('post2', 'https://bsky.app/profile/user.bsky.social/post/post2')
+      const post3 = bskyPost('post3', 'https://bsky.app/profile/user.bsky.social/post/post3')
+
+      const threadCalls: string[] = []
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('api.fxbsky.app/2/thread/user.bsky.social/post1')) {
+          threadCalls.push('post1')
+          return new Response(
+            JSON.stringify({ code: 200, status: post1, thread: [post1, post2] }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        if (url.includes('api.fxbsky.app/2/thread/user.bsky.social/post2')) {
+          threadCalls.push('post2')
+          return new Response(
+            JSON.stringify({ code: 200, status: post2, thread: [post1, post2, post3] }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        if (url.includes('api.fxbsky.app/2/thread/user.bsky.social/post3')) {
+          threadCalls.push('post3')
+          return new Response(
+            JSON.stringify({ code: 200, status: post3, thread: [post1, post2, post3] }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        return new Response(new Blob(['img1'], { type: 'image/jpeg' }), { status: 200 })
+      }) as any
+
+      const source = await openThreadProject({
+        type: 'bluesky',
+        handle: 'user.bsky.social',
+        rkey: 'post1',
+      })
+      const pages = await source.listPages()
+      expect(pages).toHaveLength(1)
+      expect(threadCalls).toEqual(['post1', 'post2', 'post3'])
+    })
   })
 })

@@ -222,6 +222,13 @@ export interface AddImagesResult {
 }
 
 /**
+ * `skipped[].reason` for an image whose bytes exactly match a page already in the
+ * project. Exported so callers can tell this expected, non-alarming case apart from a
+ * real failure (a bad file, a write error) when deciding how to report `skipped`.
+ */
+export const DUPLICATE_IMAGE_REASON = 'Duplicate of a page already in the project'
+
+/**
  * Serialises `addImages` calls.
  *
  * Two pastes in quick succession would otherwise both read the same set of taken
@@ -255,13 +262,28 @@ async function addImagesNow(blobs: Blob[]): Promise<AddImagesResult> {
   const { source, project } = store.get()
   if (!source?.addImage || !project) return { added: [], skipped: [] }
 
+  // Every page already carries a content hash (for stale detection on reconcile), so
+  // it doubles as a free duplicate check -- important for thread imports specifically,
+  // since the unofficial thread-unrolling API is non-deterministic about how much of a
+  // thread it returns per call. A later "Add thread" fetch chasing a longer window than
+  // an earlier one re-downloads posts already in the project; skip any image whose
+  // bytes exactly match a page that's already here (or another image earlier in this
+  // same batch), rather than appending a visible duplicate.
+  const seenHashes = new Set(project.pages.map((p) => p.hash))
+
   const skipped: AddImagesResult['skipped'] = []
-  const storable: { blob: Blob }[] = []
+  const storable: { blob: Blob; hash: string }[] = []
   const extensions: string[] = []
   for (const blob of blobs) {
     try {
       const ready = await toStorableImage(blob)
-      storable.push({ blob: ready.blob })
+      const hash = await hashFile(ready.blob)
+      if (seenHashes.has(hash)) {
+        skipped.push({ type: blob.type || 'unknown', reason: DUPLICATE_IMAGE_REASON })
+        continue
+      }
+      seenHashes.add(hash)
+      storable.push({ blob: ready.blob, hash })
       extensions.push(ready.extension)
     } catch (err) {
       skipped.push({ type: blob.type || 'unknown', reason: describe(err) })
@@ -281,9 +303,7 @@ async function addImagesNow(blobs: Blob[]): Promise<AddImagesResult> {
   for (const [i, ready] of storable.entries()) {
     try {
       const { name, page } = await source.addImage(names[i]!, ready.blob)
-      // Hash what was written, not what came in: a mismatch makes the next
-      // reconcile call a brand-new page `stale`.
-      written.push({ name, hash: await hashFile(ready.blob), page })
+      written.push({ name, hash: ready.hash, page })
     } catch (err) {
       skipped.push({ type: ready.blob.type || 'unknown', reason: describe(err) })
     }
