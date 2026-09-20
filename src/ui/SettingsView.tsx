@@ -1,5 +1,10 @@
 import { useState } from 'preact/hooks'
-import { DEFAULT_PROMPT_TEMPLATE, PLACEHOLDERS, renderPrompt } from '../api/prompt'
+import {
+  CONTEXT_PLACEHOLDER,
+  DEFAULT_PROMPT_TEMPLATE,
+  PLACEHOLDERS,
+  renderPrompt,
+} from '../api/prompt'
 import {
   SOURCE_LANG_NAMES,
   TARGET_LANG_NAMES,
@@ -7,12 +12,14 @@ import {
   type SourceLang,
   type TargetLang,
 } from '../state/schema'
+import { resolveContext, useNotes } from '../state/notes'
 import type { Endpoint, EndpointKind } from '../state/settings'
 import { updateSettings, useStore } from '../state/store'
 import { Banner } from './common'
 
 export function SettingsView() {
   const { settings, project } = useStore()
+  const { notes } = useNotes()
   const [previewing, setPreviewing] = useState(false)
 
   const preview = renderPrompt(settings.promptTemplate, {
@@ -22,6 +29,7 @@ export function SettingsView() {
       readingDirection: settings.readingDirection,
     },
     glossary: project?.glossary ?? [],
+    context: project ? resolveContext(project, notes) : '',
   })
 
   return (
@@ -182,6 +190,25 @@ export function SettingsView() {
           value={settings.promptTemplate}
           onInput={(e) => updateSettings({ promptTemplate: e.currentTarget.value })}
         />
+        {!settings.promptTemplate.includes(CONTEXT_PLACEHOLDER) && (
+          <Banner kind="warn">
+            This template has no <span class="mono">{CONTEXT_PLACEHOLDER}</span>{' '}
+            placeholder, so the per-project and per-series notes are not being sent. A
+            template that drops a placeholder simply loses that feature -- nothing is
+            added behind your back.{' '}
+            <button
+              class="small"
+              onClick={() =>
+                updateSettings({
+                  promptTemplate:
+                    settings.promptTemplate.trimEnd() + '\n\n' + CONTEXT_PLACEHOLDER,
+                })
+              }
+            >
+              add it
+            </button>
+          </Banner>
+        )}
         <div class="row" style="margin-top:10px">
           <button onClick={() => setPreviewing((v) => !v)}>
             {previewing ? 'Hide' : 'Show'} rendered prompt

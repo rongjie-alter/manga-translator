@@ -70,6 +70,7 @@ function harness(respond: (files: string[], callIndex: number) => ChatResult | P
   const deps: RunDeps = {
     endpoint,
     promptTemplate: DEFAULT_PROMPT_TEMPLATE,
+    context: '',
     includeThoughts: false,
     maxEdge: 1600,
     loadImage: async () => new Blob(['x']),

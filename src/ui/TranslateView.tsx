@@ -4,6 +4,7 @@ import { pendingFiles } from '../api/batcher'
 import { dailyCapFor, estimateRun, formatTokens, type Estimate } from '../api/estimate'
 import { renderPrompt } from '../api/prompt'
 import type { Dimensions } from '../fs/images'
+import { resolveContext, useNotes } from '../state/notes'
 import { translatablePages, type ProjectFile } from '../state/schema'
 import { activeEndpoint } from '../state/settings'
 import { cancelRun, loadPageBlob, startRun, useStore } from '../state/store'
@@ -14,6 +15,7 @@ const SAMPLE_SIZE = 3
 
 export function TranslateView() {
   const { project, settings, run } = useStore()
+  const { notes } = useNotes()
   const [sampled, setSampled] = useState<Dimensions[]>([])
   const endpoint = activeEndpoint(settings)
 
@@ -40,6 +42,7 @@ export function TranslateView() {
   const systemPrompt = renderPrompt(settings.promptTemplate, {
     meta: project.project,
     glossary: project.glossary,
+    context: resolveContext(project, notes),
   })
   const estimate = estimateRun({
     pageCount: files.length,

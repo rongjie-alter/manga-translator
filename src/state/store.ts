@@ -6,7 +6,6 @@
  * project. Views subscribe with `useStore`.
  */
 
-import { useEffect, useState } from 'preact/hooks'
 import {
   pendingFiles,
   runTranslation,
@@ -19,28 +18,10 @@ import { planNames, toStorableImage } from '../fs/add-images'
 import { hashFile } from '../fs/images'
 import { loadProject, saveProject, type ReconcileReport } from '../fs/project-file'
 import type { PageSource, ProjectSource } from '../fs/source'
+import { getNotes, resolveContext } from './notes'
+import { Store, useStoreValue } from './observable'
 import { newPage, type ProjectFile } from './schema'
 import { activeEndpoint, loadSettings, saveSettings, type AppSettings } from './settings'
-
-class Store<T extends object> {
-  private listeners = new Set<() => void>()
-
-  constructor(private state: T) {}
-
-  get(): T {
-    return this.state
-  }
-
-  set(patch: Partial<T>): void {
-    this.state = { ...this.state, ...patch }
-    for (const listener of this.listeners) listener()
-  }
-
-  subscribe(listener: () => void): () => void {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
-  }
-}
 
 export interface RunState {
   running: boolean
@@ -99,9 +80,7 @@ export const store = new Store<AppState>({
 })
 
 export function useStore(): AppState {
-  const [state, setState] = useState(store.get())
-  useEffect(() => store.subscribe(() => setState(store.get())), [])
-  return state
+  return useStoreValue(store)
 }
 
 // -- settings ---------------------------------------------------------------
@@ -414,6 +393,7 @@ export async function startRun(opts: StartRunOptions = {}): Promise<void> {
   const deps: RunDeps = {
     endpoint,
     promptTemplate: settings.promptTemplate,
+    context: resolveContext(project, getNotes()),
     includeThoughts: settings.includeThoughts,
     maxEdge: settings.maxEdge,
     loadImage: loadPageBlob,

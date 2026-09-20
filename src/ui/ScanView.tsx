@@ -11,10 +11,16 @@ import {
   type SourceLang,
   type TargetLang,
 } from '../state/schema'
+import { CONTEXT_PLACEHOLDER } from '../api/prompt'
+import { createSeries, findSeries, sortedSeries, useNotes } from '../state/notes'
 import { addImages, openSource, saveNow, updateProject, useStore } from '../state/store'
+import { NotesTransfer } from './NotesTransfer'
 import { Banner, PageImage, StatusDot, countByStatus } from './common'
 import { describeRejection, imagesFrom, isEditable } from './incoming'
 import { useEffect, useRef, useState } from 'preact/hooks'
+
+/** Sentinel option value for "create one now" in the series picker. */
+const NEW_SERIES = '__new__'
 
 export function ScanView() {
   const { project, source, report } = useStore()
@@ -138,6 +144,8 @@ export function ScanView() {
           </span>
         </div>
       </div>
+
+      <SeriesContextCard project={project} />
 
       <PdfResolutionCard />
 
@@ -301,6 +309,95 @@ function AddPagesCard() {
  * `AddPagesCard` uses for `addImage` -- a folder or single-image project has no
  * renderer to reconfigure.
  */
+/**
+ * Which series this project belongs to, and what else the model should know about it.
+ *
+ * The series link is what makes the glossary portable between volumes; the context box
+ * is for everything a term pair cannot express.
+ */
+function SeriesContextCard({ project }: { project: ProjectFile }) {
+  const { settings } = useStore()
+  const { notes, loaded } = useNotes()
+  const series = findSeries(notes, project.project.seriesId)
+  const templateTakesContext = settings.promptTemplate.includes(CONTEXT_PLACEHOLDER)
+
+  const assign = (value: string): void => {
+    if (value === NEW_SERIES) {
+      const name = prompt('Name of the series', project.project.name)
+      if (name === null) return
+      const id = createSeries(name)
+      if (id !== '') setMeta({ seriesId: id, seriesName: name.trim() })
+      return
+    }
+    const picked = findSeries(notes, value)
+    setMeta({ seriesId: picked?.id ?? '', seriesName: picked?.name ?? '' })
+  }
+
+  return (
+    <div class="card">
+      <h2>Series &amp; context</h2>
+      <div class="fields">
+        <div>
+          <label for="series">Series</label>
+          <select
+            id="series"
+            disabled={!loaded}
+            value={series ? series.id : ''}
+            onChange={(e) => assign(e.currentTarget.value)}
+          >
+            <option value="">Not part of a series</option>
+            {sortedSeries(notes).map((s) => (
+              <option value={s.id} key={s.id}>
+                {s.name} ({s.terms.length} terms)
+              </option>
+            ))}
+            <option value={NEW_SERIES}>New series…</option>
+          </select>
+        </div>
+      </div>
+
+      {project.project.seriesId !== '' && !series && loaded && (
+        <Banner kind="warn">
+          This project belongs to “{project.project.seriesName || project.project.seriesId}”,
+          which is not in this browser's notes. Import it on the{' '}
+          <a href="#/notes">Notes page</a> to reconnect, or pick another series above.
+        </Banner>
+      )}
+
+      {series && series.context.trim() !== '' && (
+        <div style="margin-top:12px">
+          <label>Inherited from {series.name}</label>
+          <p class="muted" style="white-space:pre-wrap;margin:0">
+            {series.context}
+          </p>
+        </div>
+      )}
+
+      <div style="margin-top:12px">
+        <label for="context">Additional context for this project</label>
+        <textarea
+          id="context"
+          rows={4}
+          placeholder="e.g. This volume is a flashback. Kenji narrates. Signs in the background can stay untranslated."
+          value={project.project.context}
+          onInput={(e) => setMeta({ context: e.currentTarget.value })}
+        />
+      </div>
+
+      {!templateTakesContext && project.project.context.trim() !== '' && (
+        <Banner kind="warn">
+          Your prompt template has no {CONTEXT_PLACEHOLDER} placeholder, so this text is
+          not being sent. Add it on the <a href="#/settings">Settings page</a>.
+        </Banner>
+      )}
+
+      <div style="margin-top:14px">
+        <NotesTransfer project={project} />
+      </div>
+    </div>
+  )
+}
+
 function PdfResolutionCard() {
   const { source } = useStore()
   const [edge, setEdge] = useState(source?.pdfRenderEdge ?? 2400)

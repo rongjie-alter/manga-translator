@@ -620,3 +620,79 @@ label {
   border-radius: 6px;
   background: var(--panel);
 }
+
+/* Checkbox pickers. The blanket `input` rule above would otherwise render a checkbox
+   as a full-width bordered box, and `label` is display:block. */
+input[type='checkbox'] {
+  width: auto;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* A term list can run to hundreds of rows; give it its own scroll like .page-list. */
+.picker {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.picker .table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+
+.series-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .series-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.series-list {
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.series-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+}
+
+.series-list button[aria-current='true'] {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.diff-old {
+  color: var(--muted);
+  text-decoration: line-through;
+}

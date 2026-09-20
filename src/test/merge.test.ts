@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { editLine, mergeGlossary, mergeLines, revertLine } from '../api/merge'
+import {
+  addGlossaryEntries,
+  editLine,
+  mergeGlossary,
+  mergeLines,
+  revertLine,
+} from '../api/merge'
 import type { ModelLine } from '../api/contract'
 import type { GlossaryEntry, Line } from '../state/schema'
 
@@ -141,6 +147,69 @@ describe('mergeGlossary', () => {
   it('does not mutate the glossary it was given', () => {
     const existing = [entry()]
     mergeGlossary(existing, [{ term: 'ケンジ', translation: 'Kenji', note: '' }])
+    expect(existing).toHaveLength(1)
+  })
+})
+
+describe('addGlossaryEntries', () => {
+  const entry = (over: Partial<GlossaryEntry> = {}): GlossaryEntry => ({
+    term: 'リナ',
+    translation: 'Rina',
+    note: '',
+    locked: false,
+    ...over,
+  })
+
+  it('copies picked terms in, locked, because they are settled', () => {
+    const r = addGlossaryEntries([], [entry({ note: 'lead' })])
+    expect(r.added).toEqual(['リナ'])
+    expect(r.glossary[0]).toEqual({
+      term: 'リナ',
+      translation: 'Rina',
+      note: 'lead',
+      locked: true,
+    })
+  })
+
+  it('keeps the project term by default and reports the clash', () => {
+    const r = addGlossaryEntries([entry({ translation: 'Lina' })], [entry()])
+    expect(r.conflicted).toEqual(['リナ'])
+    expect(r.replaced).toEqual([])
+    expect(r.glossary[0]!.translation).toBe('Lina')
+  })
+
+  it('replaces and locks when the user says so', () => {
+    const r = addGlossaryEntries([entry({ translation: 'Lina' })], [entry()], 'replace')
+    expect(r.replaced).toEqual(['リナ'])
+    expect(r.glossary[0]).toMatchObject({ translation: 'Rina', locked: true })
+  })
+
+  it('says nothing about a term that already agrees', () => {
+    const r = addGlossaryEntries([entry()], [entry()])
+    expect(r).toMatchObject({ added: [], replaced: [], conflicted: [], skipped: [] })
+  })
+
+  it('keeps the project note when the incoming one is blank', () => {
+    const r = addGlossaryEntries([entry({ note: 'mine' })], [entry({ translation: 'Lina' })], 'replace')
+    expect(r.glossary[0]!.note).toBe('mine')
+  })
+
+  it('separates hitting the cap from a clash', () => {
+    const full = Array.from({ length: 200 }, (_, i) => entry({ term: 't' + i }))
+    const r = addGlossaryEntries(full, [entry({ term: 'new', translation: 'New' })])
+    expect(r.skipped).toEqual(['new'])
+    expect(r.conflicted).toEqual([])
+    expect(r.glossary).toHaveLength(200)
+  })
+
+  it('ignores entries missing a term or a translation', () => {
+    const r = addGlossaryEntries([], [entry({ term: ' ' }), entry({ translation: '' })])
+    expect(r.glossary).toEqual([])
+  })
+
+  it('does not mutate the glossary it was given', () => {
+    const existing = [entry()]
+    addGlossaryEntries(existing, [entry({ term: 'ケンジ', translation: 'Kenji' })])
     expect(existing).toHaveLength(1)
   })
 })

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { dailyCapFor, estimateRun, formatTokens } from '../api/estimate'
 import { fitWithin, imageTokens } from '../fs/images'
-import { DEFAULT_PROMPT_TEMPLATE, renderGlossary, renderPrompt } from '../api/prompt'
+import {
+  DEFAULT_PROMPT_TEMPLATE,
+  renderContext,
+  renderGlossary,
+  renderPrompt,
+} from '../api/prompt'
 
 const PAGE = { width: 846, height: 1200 }
 
@@ -88,7 +93,7 @@ describe('renderPrompt', () => {
   const meta = { sourceLang: 'ja', targetLang: 'zh-Hant', readingDirection: 'rtl' } as const
 
   it('substitutes languages and reading order', () => {
-    const text = renderPrompt(DEFAULT_PROMPT_TEMPLATE, { meta, glossary: [] })
+    const text = renderPrompt(DEFAULT_PROMPT_TEMPLATE, { meta, glossary: [], context: '' })
     expect(text).toContain('Japanese')
     expect(text).toContain('Traditional Chinese')
     expect(text).toContain('right to left')
@@ -99,20 +104,53 @@ describe('renderPrompt', () => {
     const text = renderPrompt(DEFAULT_PROMPT_TEMPLATE, {
       meta,
       glossary: [{ term: 'リナ', translation: 'Rina', note: 'lead', locked: true }],
+      context: '',
     })
     expect(text).toContain('リナ → Rina  (lead)')
   })
 
   it('leaves no gap where an empty glossary would have gone', () => {
-    const text = renderPrompt(DEFAULT_PROMPT_TEMPLATE, { meta, glossary: [] })
+    const text = renderPrompt(DEFAULT_PROMPT_TEMPLATE, { meta, glossary: [], context: '' })
     expect(text).not.toMatch(/\n\n\n/)
   })
 
   it('works with a user template that drops placeholders', () => {
-    expect(renderPrompt('Just translate it.', { meta, glossary: [] })).toBe('Just translate it.')
+    expect(renderPrompt('Just translate it.', { meta, glossary: [], context: '' })).toBe('Just translate it.')
   })
 
   it('renders nothing for an empty glossary', () => {
     expect(renderGlossary([])).toBe('')
+  })
+})
+
+describe('renderContext', () => {
+  const meta = { sourceLang: 'ja', targetLang: 'zh-Hant', readingDirection: 'rtl' } as const
+
+  it('labels the context so the model knows what it is reading', () => {
+    const text = renderPrompt(DEFAULT_PROMPT_TEMPLATE, {
+      meta,
+      glossary: [],
+      context: 'Set in 1920s Tokyo. Keep honorifics.',
+    })
+    expect(text).toContain('Additional context for this work:')
+    expect(text).toContain('Set in 1920s Tokyo. Keep honorifics.')
+  })
+
+  it('leaves no gap where an empty context would have gone', () => {
+    const text = renderPrompt(DEFAULT_PROMPT_TEMPLATE, { meta, glossary: [], context: '   ' })
+    expect(text).not.toMatch(/\n\n\n/)
+    expect(text).not.toContain('Additional context')
+  })
+
+  it('renders nothing for an empty context', () => {
+    expect(renderContext('')).toBe('')
+    expect(renderContext(' \n ')).toBe('')
+  })
+
+  it('drops the context when the template has no placeholder for it', () => {
+    // Deliberate: a template that omits a placeholder loses that feature. The settings
+    // and scan views warn about it rather than smuggling the text in anyway.
+    const text = renderPrompt('Translate it.', { meta, glossary: [], context: 'Keep honorifics' })
+    expect(text).toBe('Translate it.')
   })
 })

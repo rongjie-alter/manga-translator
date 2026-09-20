@@ -1,6 +1,7 @@
 /**
  * Folding a model response back into the project: line merging with sticky hand edits,
- * and glossary accumulation.
+ * and glossary accumulation -- plus the user-driven counterpart, copying hand-picked
+ * entries in from the notes store (`addGlossaryEntries`).
  *
  * All pure functions over plain data. The rules here decide whether a user's afternoon
  * of manual corrections survives a retranslate, so they are the part worth testing
@@ -140,4 +141,86 @@ export function mergeGlossary(
   }
 
   return { glossary, added, skipped }
+}
+
+/**
+ * What to do with a term the project already has under a different translation.
+ *
+ * `keep` is the safe default. `replace` is what the user chooses when the notes store
+ * holds the official rendering and the model invented its own -- and it is the point at
+ * which the rename sweep (`api/rename.ts`) should be offered, since replacing the
+ * glossary entry alone leaves every page already translated saying the old name.
+ */
+export type ConflictPolicy = 'keep' | 'replace'
+
+export interface AddGlossaryResult {
+  glossary: GlossaryEntry[]
+  added: string[]
+  /** Terms whose translation was changed to the incoming one. */
+  replaced: string[]
+  /** Terms already present, left alone under the `keep` policy. */
+  conflicted: string[]
+  /** Terms dropped because the project glossary is at capacity. */
+  skipped: string[]
+}
+
+/**
+ * Copy hand-picked entries into a project's glossary.
+ *
+ * Distinct from `mergeGlossary`, which folds in what the *model* proposed and therefore
+ * never lets a later suggestion move a name. These entries come from the user ticking
+ * boxes, so `replace` has to be available -- and a term that is already present is a
+ * decision to report, not the same thing as one dropped at the cap.
+ *
+ * Entries arrive locked: the whole point of promoting a term to the notes store is that
+ * its translation is settled, and an unlocked entry is one a later run can still edit.
+ */
+export function addGlossaryEntries(
+  existing: GlossaryEntry[],
+  incoming: GlossaryEntry[],
+  onConflict: ConflictPolicy = 'keep',
+): AddGlossaryResult {
+  const byTerm = new Map(existing.map((entry) => [entry.term, entry]))
+  const glossary = existing.slice()
+  const added: string[] = []
+  const replaced: string[] = []
+  const conflicted: string[] = []
+  const skipped: string[] = []
+
+  for (const source of incoming) {
+    const term = source.term.trim()
+    const translation = source.translation.trim()
+    if (term === '' || translation === '') continue
+
+    const current = byTerm.get(term)
+    if (current) {
+      if (current.translation === translation) continue
+      if (onConflict === 'keep') {
+        conflicted.push(term)
+        continue
+      }
+      const at = glossary.indexOf(current)
+      const updated: GlossaryEntry = {
+        ...current,
+        translation,
+        note: source.note.trim() === '' ? current.note : source.note.trim(),
+        locked: true,
+      }
+      glossary[at] = updated
+      byTerm.set(term, updated)
+      replaced.push(term)
+      continue
+    }
+
+    if (glossary.length >= MAX_GLOSSARY_ENTRIES) {
+      skipped.push(term)
+      continue
+    }
+    const entry: GlossaryEntry = { term, translation, note: source.note.trim(), locked: true }
+    glossary.push(entry)
+    byTerm.set(term, entry)
+    added.push(term)
+  }
+
+  return { glossary, added, replaced, conflicted, skipped }
 }

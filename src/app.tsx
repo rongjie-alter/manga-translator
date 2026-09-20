@@ -6,9 +6,10 @@ import { TranslateView } from './ui/TranslateView'
 import { ReviewView } from './ui/ReviewView'
 import { ReaderView } from './ui/ReaderView'
 import { SettingsView } from './ui/SettingsView'
+import { NotesView } from './ui/NotesView'
 import { Banner } from './ui/common'
 
-const ROUTES = ['projects', 'scan', 'translate', 'review', 'read', 'settings'] as const
+const ROUTES = ['projects', 'scan', 'translate', 'review', 'read', 'notes', 'settings'] as const
 export type Route = (typeof ROUTES)[number]
 
 function currentRoute(): Route {
@@ -30,6 +31,9 @@ function useRoute(): Route {
   return route
 }
 
+/** Routes that stand on their own without a project open. */
+const UNGATED: readonly Route[] = ['projects', 'notes', 'settings']
+
 export function App() {
   const route = useRoute()
   const state = useStore()
@@ -39,7 +43,9 @@ export function App() {
 
   // Routes that need a project fall back to the project picker rather than rendering
   // an empty shell -- reachable by typing a URL, or by reloading after closing one.
-  const effective: Route = !hasProject && route !== 'settings' ? 'projects' : route
+  // Notes are deliberately not among them: preparing a series for the next volume is
+  // most of the reason to open them, and there is no project yet at that point.
+  const effective: Route = !hasProject && !UNGATED.includes(route) ? 'projects' : route
 
   return (
     <div class="shell">
@@ -51,6 +57,7 @@ export function App() {
           <Link route="translate" current={effective} label="Translate" disabled={!hasProject} />
           <Link route="review" current={effective} label="Review" disabled={!hasProject} />
           <Link route="read" current={effective} label="Read" disabled={!hasProject} />
+          <Link route="notes" current={effective} label="Notes" />
           <Link route="settings" current={effective} label="Settings" />
         </nav>
         <span class="spacer" />
@@ -75,6 +82,7 @@ export function App() {
         {effective === 'translate' && <TranslateView />}
         {effective === 'review' && <ReviewView />}
         {effective === 'read' && <ReaderView />}
+        {effective === 'notes' && <NotesView />}
         {effective === 'settings' && <SettingsView />}
       </main>
     </div>

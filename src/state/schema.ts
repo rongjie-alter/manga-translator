@@ -87,6 +87,18 @@ export interface ProjectMeta {
   sourceLang: SourceLang
   targetLang: TargetLang
   readingDirection: ReadingDirection
+  /** Series in the notes store this project draws terms from; '' when unassigned. */
+  seriesId: string
+  /**
+   * The series' name at the time it was assigned.
+   *
+   * Denormalised on purpose: the notes store lives in this browser, the project file
+   * travels with the folder. Without the name a project opened on another machine can
+   * only report a dangling UUID, which tells the user nothing about what to import.
+   */
+  seriesName: string
+  /** Extra instructions for the model, specific to this project. */
+  context: string
   createdAt: string
   updatedAt: string
 }
@@ -134,6 +146,9 @@ export function newProjectFile(
       sourceLang: opts.sourceLang ?? 'ja',
       targetLang: opts.targetLang ?? 'en',
       readingDirection: opts.readingDirection ?? 'rtl',
+      seriesId: opts.seriesId ?? '',
+      seriesName: opts.seriesName ?? '',
+      context: opts.context ?? '',
       createdAt: now,
       updatedAt: now,
     },
@@ -200,6 +215,9 @@ export function migrate(raw: unknown): ProjectFile {
       sourceLang: oneOf(meta['sourceLang'], ['ja', 'ko'], 'ja'),
       targetLang: oneOf(meta['targetLang'], ['en', 'zh-Hans', 'zh-Hant'], 'en'),
       readingDirection: oneOf(meta['readingDirection'], ['rtl', 'ltr'], 'rtl'),
+      seriesId: str(meta['seriesId'], ''),
+      seriesName: str(meta['seriesName'], ''),
+      context: str(meta['context'], ''),
       createdAt: str(meta['createdAt'], now),
       updatedAt: str(meta['updatedAt'], now),
     },
@@ -262,7 +280,7 @@ function migrateLine(raw: unknown, i: number): Line {
   }
 }
 
-function migrateGlossaryEntry(raw: unknown): GlossaryEntry {
+export function migrateGlossaryEntry(raw: unknown): GlossaryEntry {
   const o = asRecord(raw)
   return {
     term: str(o['term'], ''),

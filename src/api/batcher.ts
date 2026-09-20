@@ -52,6 +52,8 @@ export interface CallUsage {
 export interface RunDeps {
   endpoint: Endpoint
   promptTemplate: string
+  /** Series and project instructions, already composed. See `state/notes.ts`. */
+  context: string
   includeThoughts: boolean
   maxEdge: number
   /** Reads a page image by its project-relative file name. */
@@ -193,6 +195,7 @@ async function translateBatch(
   const systemPrompt = renderPrompt(deps.promptTemplate, {
     meta: project.project,
     glossary: project.glossary,
+    context: deps.context,
   })
 
   const prepare = deps.prepare ?? prepareImage

@@ -59,6 +59,20 @@ says so. Consequence worth remembering: for this path IndexedDB is *not* a
 throwaway cache, so `navigator.storage.persist()` is requested on import and
 "Forget" deliberately leaves the stored JSON behind.
 
+**The notes store is the second exception.** `state/notes.ts` keeps glossary terms and
+translation instructions grouped by *series*, so volume 5 can start with the names
+volume 1 settled on. It lives in one IndexedDB record (`notes:v1`) and is the only copy
+— no project file holds it — so the same three rules as above apply: `persist()` is
+requested once there is something to lose, write failures are surfaced rather than
+swallowed, and Export (`glossary-notes.json`) is the documented way out. It is also the
+reason `state/observable.ts` exists: `store.ts` reads notes to compose a run's context,
+so the `Store` class had to move somewhere both can import without a cycle.
+
+Terms are *copied* between a project and its series, never linked, and only ever by an
+explicit user action — a one-shot comic must not silently fill the series up. `ProjectMeta`
+carries `seriesId` plus a denormalised `seriesName`, so a project opened on a machine
+without the notes store can say which series it wants rather than showing a bare UUID.
+
 App-level config (API keys, endpoints, prompt template, defaults) lives in
 `state/settings.ts` and is persisted to `localStorage`, separately from the project
 JSON — an API key must never end up in a file a user might share alongside their
@@ -119,7 +133,11 @@ every batch so closing the tab mid-run costs at most the in-flight batch.
 
 Pipeline, in call order:
 - `api/prompt.ts` renders the system prompt template, substituting
-  `{sourceLanguage}`/`{targetLanguage}`/`{readingOrder}`/`{glossary}`.
+  `{sourceLanguage}`/`{targetLanguage}`/`{readingOrder}`/`{glossary}`/`{context}`.
+  `{context}` carries the series' shared instructions plus the project's own, composed
+  by `resolveContext` in `state/notes.ts`. Note it is the one placeholder holding text
+  the user typed by hand, and a template that omits it still just drops it — the
+  settings and scan views warn instead of smuggling the text in.
 - `api/request.ts` builds the provider-specific request body. Gemini and
   OpenAI-compatible endpoints get genuinely different shapes here — see below.
 - `api/client.ts` (`chat()`) makes the HTTP call and classifies the outcome into an
@@ -167,6 +185,19 @@ marks the project dirty and schedules a debounced (800ms) autosave; `saveNow()` 
 be called directly (e.g. before an action that discards state) to flush immediately.
 `installUnloadGuard()` wires `beforeunload` to warn on an active run or unsaved
 changes.
+
+The `Store` class itself is in `state/observable.ts`, shared with `state/notes.ts`
+(which is a second, independent store — notes outlive the open project, and `Store.set`
+notifies every listener unconditionally, so folding them into `AppState` would re-render
+the page grid on every keystroke in a series' context box). `useStoreValue` re-reads the
+store inside its subscribe effect on purpose: an update landing between a component's
+first render and that effect would otherwise be lost forever, which is exactly what an
+async load at startup does.
+
+`api/rename.ts` is the repair path for a term that was already translated wrongly across
+a whole project: `planRename` previews every affected line, `applyRename` rewrites the
+checked ones through `editLine`, so a swept line counts as a hand edit and the existing
+per-line revert still restores the model's own words.
 
 ### Testing
 

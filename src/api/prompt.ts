@@ -18,7 +18,11 @@ export const PLACEHOLDERS = [
   '{targetLanguage}',
   '{readingOrder}',
   '{glossary}',
+  '{context}',
 ] as const
+
+/** Required by the one placeholder that carries text the user typed. See `renderContext`. */
+export const CONTEXT_PLACEHOLDER = '{context}'
 
 export const DEFAULT_PROMPT_TEMPLATE = `You are a professional comic translator working from {sourceLanguage} into {targetLanguage}.
 
@@ -35,6 +39,8 @@ For every page, transcribe each piece of text and translate it:
 
 {glossary}
 
+{context}
+
 Return one entry in "pages" for every page you were given, using the exact filename from its marker. Put character names and any other recurring terms worth keeping consistent into "glossary".
 
 Respond with JSON only.`
@@ -42,6 +48,15 @@ Respond with JSON only.`
 export interface PromptContext {
   meta: Pick<ProjectMeta, 'sourceLang' | 'targetLang' | 'readingDirection'>
   glossary: GlossaryEntry[]
+  /**
+   * The series' shared instructions plus the project's own, already composed --
+   * see `resolveContext` in `state/notes.ts`.
+   *
+   * Required rather than optional so that adding a caller which forgets it is a
+   * compile error: the cost estimate and the actual run have to render the same
+   * prompt, and an implicit `''` is exactly how those two quietly drift apart.
+   */
+  context: string
 }
 
 export function renderPrompt(template: string, ctx: PromptContext): string {
@@ -53,6 +68,7 @@ export function renderPrompt(template: string, ctx: PromptContext): string {
         ? 'right to left, as Japanese comics are read'
         : 'left to right',
     '{glossary}': renderGlossary(ctx.glossary),
+    '{context}': renderContext(ctx.context),
   }
   return Object.entries(substitutions)
     .reduce((text, [key, value]) => text.split(key).join(value), template)
@@ -74,4 +90,19 @@ export function renderGlossary(glossary: GlossaryEntry[]): string {
     'Use these established translations for recurring terms. They are decided; do not vary them:\n' +
     lines.join('\n')
   )
+}
+
+/**
+ * The free-text notes about this series and this volume -- setting, tone, honorific
+ * policy, anything the glossary cannot express as a term pair.
+ *
+ * Unlike the other placeholders this one carries text the user typed by hand, so a
+ * template that omits `{context}` silently throws that text away. `renderPrompt` does
+ * not compensate for that -- dropping a placeholder is the user's business, per this
+ * module's contract -- but the settings and scan views both warn when it happens.
+ */
+export function renderContext(context: string): string {
+  const text = context.trim()
+  if (text === '') return ''
+  return 'Additional context for this work:\n' + text
 }

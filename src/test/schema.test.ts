@@ -97,6 +97,25 @@ describe('migrate', () => {
     expect(() => migrate(null)).toThrow(MigrationError)
     expect(() => migrate('{}')).toThrow(MigrationError)
   })
+
+  it('defaults the series link and context on a file written before they existed', () => {
+    const old = JSON.parse(serializeProject(sample())) as Record<string, unknown>
+    const meta = old['project'] as Record<string, unknown>
+    delete meta['seriesId']
+    delete meta['seriesName']
+    delete meta['context']
+
+    expect(migrate(old).project).toMatchObject({ seriesId: '', seriesName: '', context: '' })
+  })
+
+  it('keeps a series link and context it is given', () => {
+    const project = sample()
+    project.project.seriesId = 's1'
+    project.project.seriesName = 'Blue Period'
+    project.project.context = 'Keep honorifics'
+
+    expect(migrate(JSON.parse(serializeProject(project)))).toEqual(project)
+  })
 })
 
 describe('translatablePages', () => {
