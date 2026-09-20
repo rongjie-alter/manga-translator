@@ -106,6 +106,10 @@ describe('openImagesProject', () => {
     expect(keyA).toBe(keyB)
     expect(keyA).toBe('project:thread:twitter:1')
   })
+
+  it('has no reprocessPdf, since dropped images have no PDF renderer', async () => {
+    expect((await openImagesProject([png('a.png')], 'Dropped pages')).reprocessPdf).toBeUndefined()
+  })
 })
 
 describe('openClipboardProject', () => {
@@ -117,6 +121,10 @@ describe('openClipboardProject', () => {
   it('leaves other sources unflagged', async () => {
     expect((await openImagesProject([png('a.png')], 'Dropped pages')).startedFromClipboard).toBeFalsy()
     expect((await openFileProject(png('cover.png'))).startedFromClipboard).toBeFalsy()
+  })
+
+  it('has no reprocessPdf, since pasted images have no PDF renderer', async () => {
+    expect((await openClipboardProject([png('a.png')])).reprocessPdf).toBeUndefined()
   })
 
   it('defaults to a fresh random id on every call, like a drop', async () => {
@@ -173,6 +181,10 @@ describe('a single-image project', () => {
 
   it('is writable, so autosave keeps working unchanged', async () => {
     expect((await openFileProject(png('cover.png'))).writable).toBe(true)
+  })
+
+  it('has no reprocessPdf, since there is no renderer to reconfigure', async () => {
+    expect((await openFileProject(png('cover.png'))).reprocessPdf).toBeUndefined()
   })
 })
 
@@ -270,6 +282,12 @@ describe('a PDF project', () => {
     const source = await openFileProject(pdfFile())
     // No local override in this test environment, so the built-in default applies.
     expect(source.pdfRenderEdge).toBe(2400)
+  })
+
+  it('has a reprocessPdf, since it is backed by a renderer to reconfigure', async () => {
+    fakePdf(1)
+    const source = await openFileProject(pdfFile())
+    expect(source.reprocessPdf).toBeTypeOf('function')
   })
 
   it('stales already-translated pages when reprocessed at a different resolution', async () => {

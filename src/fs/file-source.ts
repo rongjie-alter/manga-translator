@@ -75,6 +75,14 @@ class MemoryProjectSource implements ProjectSource {
   readonly writable = true
   readonly jsonName: string
   private pdfState: PdfState | null
+  /**
+   * Only assigned when `pdfState` is present, so `source.reprocessPdf` is genuinely
+   * absent (not just a method that throws) for a folder-less, non-PDF project --
+   * `PdfResolutionCard` in ScanView.tsx keys its visibility off this being truthy.
+   * A closure rather than a prototype method, so it still reads `this.pdfState`
+   * even though it's stored as an instance property.
+   */
+  readonly reprocessPdf?: (renderEdge: number) => Promise<void>
 
   constructor(
     readonly name: string,
@@ -86,13 +94,14 @@ class MemoryProjectSource implements ProjectSource {
   ) {
     this.jsonName = jsonNameForFile(name)
     this.pdfState = pdfState
+    if (pdfState) this.reprocessPdf = (renderEdge) => this.doReprocessPdf(renderEdge)
   }
 
   get pdfRenderEdge(): number | undefined {
     return this.pdfState?.renderEdge
   }
 
-  async reprocessPdf(renderEdge: number): Promise<void> {
+  private async doReprocessPdf(renderEdge: number): Promise<void> {
     const state = this.pdfState
     if (!state) throw new Error('this project is not backed by a PDF')
     const { openPdf } = await import('./pdf')
