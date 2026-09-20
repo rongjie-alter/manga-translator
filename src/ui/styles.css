@@ -486,7 +486,7 @@ label {
 
 .spread {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr);
+  grid-template-columns: minmax(0, 5fr) minmax(240px, 2fr);
   gap: 16px;
   align-items: start;
   content-visibility: auto;
