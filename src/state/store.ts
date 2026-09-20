@@ -318,6 +318,11 @@ export function updateProject(fn: (project: ProjectFile) => ProjectFile): void {
   scheduleSave()
 }
 
+/** Patch the project's own metadata (language, direction, series, context, ...). */
+export function setMeta(patch: Partial<ProjectFile['project']>): void {
+  updateProject((p) => ({ ...p, project: { ...p.project, ...patch } }))
+}
+
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 /**

@@ -2,19 +2,32 @@ import { useEffect, useState } from 'preact/hooks'
 import { navigate } from '../app'
 import { pendingFiles } from '../api/batcher'
 import { dailyCapFor, estimateRun, formatTokens, type Estimate } from '../api/estimate'
-import { renderPrompt } from '../api/prompt'
+import { CONTEXT_PLACEHOLDER, renderPrompt } from '../api/prompt'
+import { downloadProjectJson } from '../fs/export'
 import type { Dimensions } from '../fs/images'
-import { resolveContext, useNotes } from '../state/notes'
-import { translatablePages, type ProjectFile } from '../state/schema'
+import { NotesTransfer } from './NotesTransfer'
+import { createSeries, findSeries, resolveContext, sortedSeries, useNotes } from '../state/notes'
+import {
+  SOURCE_LANG_NAMES,
+  TARGET_LANG_NAMES,
+  translatablePages,
+  type ProjectFile,
+  type ReadingDirection,
+  type SourceLang,
+  type TargetLang,
+} from '../state/schema'
 import { activeEndpoint } from '../state/settings'
-import { cancelRun, loadPageBlob, startRun, useStore } from '../state/store'
-import { Banner, Countdown, STATUS_LABEL, countByStatus } from './common'
+import { cancelRun, loadPageBlob, setMeta, startRun, updateProject, useStore } from '../state/store'
+import { Banner, Countdown, STATUS_LABEL, clamp, countByStatus } from './common'
 
 /** Measuring every page to estimate cost would mean decoding every page. Three is plenty. */
 const SAMPLE_SIZE = 3
 
+/** Sentinel option value for "create one now" in the series picker. */
+const NEW_SERIES = '__new__'
+
 export function TranslateView() {
-  const { project, settings, run } = useStore()
+  const { project, source, settings, run } = useStore()
   const { notes } = useNotes()
   const [sampled, setSampled] = useState<Dimensions[]>([])
   const endpoint = activeEndpoint(settings)
@@ -36,7 +49,7 @@ export function TranslateView() {
     }
   }, [sampleKey])
 
-  if (!project) return null
+  if (!project || !source) return null
 
   const counts = countByStatus(project.pages)
   const systemPrompt = renderPrompt(settings.promptTemplate, {
@@ -68,6 +81,78 @@ export function TranslateView() {
           {endpoint.name} has no API key yet. Add one in Settings before starting.
         </Banner>
       )}
+
+      <div class="card">
+        <h2>Translation settings</h2>
+        <div class="fields">
+          <div>
+            <label for="src">From</label>
+            <select
+              id="src"
+              value={project.project.sourceLang}
+              onChange={(e) =>
+                setMeta({ sourceLang: e.currentTarget.value as SourceLang })
+              }
+            >
+              {Object.entries(SOURCE_LANG_NAMES).map(([code, name]) => (
+                <option value={code} key={code}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label for="dst">To</label>
+            <select
+              id="dst"
+              value={project.project.targetLang}
+              onChange={(e) =>
+                setMeta({ targetLang: e.currentTarget.value as TargetLang })
+              }
+            >
+              {Object.entries(TARGET_LANG_NAMES).map(([code, name]) => (
+                <option value={code} key={code}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label for="dir">Reading direction</label>
+            <select
+              id="dir"
+              value={project.project.readingDirection}
+              onChange={(e) =>
+                setMeta({ readingDirection: e.currentTarget.value as ReadingDirection })
+              }
+            >
+              <option value="rtl">Right to left (manga)</option>
+              <option value="ltr">Left to right</option>
+            </select>
+          </div>
+          <div>
+            <label for="batch">Pages per API call</label>
+            <input
+              id="batch"
+              type="number"
+              min={1}
+              max={20}
+              value={project.settings.batchSize}
+              onInput={(e) =>
+                updateProject((p) => ({
+                  ...p,
+                  settings: {
+                    ...p.settings,
+                    batchSize: clamp(Number(e.currentTarget.value), 1, 20),
+                  },
+                }))
+              }
+            />
+          </div>
+        </div>
+      </div>
+
+      <SeriesContextCard project={project} />
 
       <div class="card">
         <h2>Before you start</h2>
@@ -169,6 +254,108 @@ export function TranslateView() {
           {counts.translated} translated · {counts.pending} pending · {counts.stale} stale ·{' '}
           {counts.failed} failed · {counts.blocked} blocked
         </p>
+      </div>
+
+      <div class="card">
+        <h2>Export</h2>
+        <p class="muted" style="margin-top:-6px">
+          Grab the translations as a JSON file. Save the page images from the Scan page to
+          go with it.
+        </p>
+        <div class="row" style="margin-top:14px">
+          <button onClick={() => downloadProjectJson(project, source.jsonName)}>
+            Download {source.jsonName}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Which series this project belongs to, and what else the model should know about it.
+ *
+ * The series link is what makes the glossary portable between volumes; the context box
+ * is for everything a term pair cannot express.
+ */
+function SeriesContextCard({ project }: { project: ProjectFile }) {
+  const { settings } = useStore()
+  const { notes, loaded } = useNotes()
+  const series = findSeries(notes, project.project.seriesId)
+  const templateTakesContext = settings.promptTemplate.includes(CONTEXT_PLACEHOLDER)
+
+  const assign = (value: string): void => {
+    if (value === NEW_SERIES) {
+      const name = prompt('Name of the series', project.project.name)
+      if (name === null) return
+      const id = createSeries(name)
+      if (id !== '') setMeta({ seriesId: id, seriesName: name.trim() })
+      return
+    }
+    const picked = findSeries(notes, value)
+    setMeta({ seriesId: picked?.id ?? '', seriesName: picked?.name ?? '' })
+  }
+
+  return (
+    <div class="card">
+      <h2>Series &amp; context</h2>
+      <div class="fields">
+        <div>
+          <label for="series">Series</label>
+          <select
+            id="series"
+            disabled={!loaded}
+            value={series ? series.id : ''}
+            onChange={(e) => assign(e.currentTarget.value)}
+          >
+            <option value="">Not part of a series</option>
+            {sortedSeries(notes).map((s) => (
+              <option value={s.id} key={s.id}>
+                {s.name} ({s.terms.length} terms)
+              </option>
+            ))}
+            <option value={NEW_SERIES}>New series…</option>
+          </select>
+        </div>
+      </div>
+
+      {project.project.seriesId !== '' && !series && loaded && (
+        <Banner kind="warn">
+          This project belongs to “{project.project.seriesName || project.project.seriesId}”,
+          which is not in this browser's notes. Import it on the{' '}
+          <a href="#/notes">Notes page</a> to reconnect, or pick another series above.
+        </Banner>
+      )}
+
+      {series && series.context.trim() !== '' && (
+        <div style="margin-top:12px">
+          <label>Inherited from {series.name}</label>
+          <p class="muted" style="white-space:pre-wrap;margin:0">
+            {series.context}
+          </p>
+        </div>
+      )}
+
+      <div style="margin-top:12px">
+        <label for="context">Additional context for this project</label>
+        <textarea
+          id="context"
+          rows={4}
+          placeholder="e.g. This volume is a flashback. Kenji narrates. Signs in the background can stay untranslated."
+          value={project.project.context}
+          onInput={(e) => setMeta({ context: e.currentTarget.value })}
+        />
+      </div>
+
+      {!templateTakesContext && project.project.context.trim() !== '' && (
+        <Banner kind="warn">
+          Your prompt template has no {CONTEXT_PLACEHOLDER} placeholder, so this text is
+          not being sent. Add it on the <a href="#/settings">Settings page</a>.
+        </Banner>
+      )}
+
+      <div style="margin-top:14px">
+        <NotesTransfer project={project} />
       </div>
     </div>
   )

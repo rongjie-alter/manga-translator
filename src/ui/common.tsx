@@ -125,3 +125,8 @@ export function Banner({
 }) {
   return <div class={'banner ' + kind}>{children}</div>
 }
+
+export function clamp(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min
+  return Math.min(max, Math.max(min, Math.round(n)))
+}

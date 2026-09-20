@@ -1,26 +1,12 @@
 import { navigate } from '../app'
-import { downloadProjectJson, saveCopyToFolder, type CopyProgress } from '../fs/export'
+import { saveImagesToFolder, type CopyProgress } from '../fs/export'
 import { isFsaSupported } from '../fs/handles'
-import {
-  orderedPages,
-  SOURCE_LANG_NAMES,
-  TARGET_LANG_NAMES,
-  type Page,
-  type ProjectFile,
-  type ReadingDirection,
-  type SourceLang,
-  type TargetLang,
-} from '../state/schema'
-import { CONTEXT_PLACEHOLDER } from '../api/prompt'
-import { createSeries, findSeries, sortedSeries, useNotes } from '../state/notes'
+import { FOLDER_JSON_NAME } from '../fs/source'
+import { orderedPages, type Page } from '../state/schema'
 import { addImages, openSource, saveNow, updateProject, useStore } from '../state/store'
-import { NotesTransfer } from './NotesTransfer'
-import { Banner, PageImage, StatusDot, countByStatus } from './common'
+import { Banner, PageImage, StatusDot, clamp, countByStatus } from './common'
 import { describeRejection, imagesFrom, isEditable } from './incoming'
 import { useEffect, useRef, useState } from 'preact/hooks'
-
-/** Sentinel option value for "create one now" in the series picker. */
-const NEW_SERIES = '__new__'
 
 export function ScanView() {
   const { project, source, report } = useStore()
@@ -29,6 +15,7 @@ export function ScanView() {
 
   const counts = countByStatus(project.pages)
   const included = project.pages.filter((p) => !p.excluded).length
+  const canRescan = source.jsonName === FOLDER_JSON_NAME
 
   return (
     <div>
@@ -52,106 +39,37 @@ export function ScanView() {
         </Banner>
       )}
 
+      <PdfResolutionCard />
+
+      <AddPagesCard />
+
       <div class="card">
-        <h2>Translation settings</h2>
-        <div class="fields">
-          <div>
-            <label for="src">From</label>
-            <select
-              id="src"
-              value={project.project.sourceLang}
-              onChange={(e) =>
-                setMeta({ sourceLang: e.currentTarget.value as SourceLang })
-              }
-            >
-              {Object.entries(SOURCE_LANG_NAMES).map(([code, name]) => (
-                <option value={code} key={code}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label for="dst">To</label>
-            <select
-              id="dst"
-              value={project.project.targetLang}
-              onChange={(e) =>
-                setMeta({ targetLang: e.currentTarget.value as TargetLang })
-              }
-            >
-              {Object.entries(TARGET_LANG_NAMES).map(([code, name]) => (
-                <option value={code} key={code}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label for="dir">Reading direction</label>
-            <select
-              id="dir"
-              value={project.project.readingDirection}
-              onChange={(e) =>
-                setMeta({ readingDirection: e.currentTarget.value as ReadingDirection })
-              }
-            >
-              <option value="rtl">Right to left (manga)</option>
-              <option value="ltr">Left to right</option>
-            </select>
-          </div>
-          <div>
-            <label for="batch">Pages per API call</label>
-            <input
-              id="batch"
-              type="number"
-              min={1}
-              max={20}
-              value={project.settings.batchSize}
-              onInput={(e) =>
-                updateProject((p) => ({
-                  ...p,
-                  settings: {
-                    ...p.settings,
-                    batchSize: clamp(Number(e.currentTarget.value), 1, 20),
-                  },
-                }))
-              }
-            />
-          </div>
-        </div>
-        <div class="row" style="margin-top:14px">
+        <div class="row">
           <button class="primary" onClick={() => navigate('translate')}>
             Continue to translate
           </button>
           <button onClick={() => void saveNow()}>Save now</button>
-          <button
-            disabled={rescanning}
-            onClick={async () => {
-              setRescanning(true)
-              try {
-                await openSource(source)
-              } finally {
-                setRescanning(false)
-              }
-            }}
-          >
-            {rescanning ? 'Rescanning…' : 'Rescan folder'}
-          </button>
+          {canRescan && (
+            <button
+              disabled={rescanning}
+              onClick={async () => {
+                setRescanning(true)
+                try {
+                  await openSource(source)
+                } finally {
+                  setRescanning(false)
+                }
+              }}
+            >
+              {rescanning ? 'Rescanning…' : 'Rescan folder'}
+            </button>
+          )}
           <span class="muted">
             {counts.translated} translated · {counts.pending} pending · {counts.stale} stale ·{' '}
             {counts.failed} failed · {counts.blocked} blocked
           </span>
         </div>
       </div>
-
-      <SeriesContextCard project={project} />
-
-      <PdfResolutionCard />
-
-      <AddPagesCard />
-
-      <ExportCard />
 
       <div class="card">
         <h2>Pages</h2>
@@ -170,6 +88,8 @@ export function ScanView() {
           ))}
         </div>
       </div>
+
+      <ExportCard />
     </div>
   )
 }
@@ -309,95 +229,6 @@ function AddPagesCard() {
  * `AddPagesCard` uses for `addImage` -- a folder or single-image project has no
  * renderer to reconfigure.
  */
-/**
- * Which series this project belongs to, and what else the model should know about it.
- *
- * The series link is what makes the glossary portable between volumes; the context box
- * is for everything a term pair cannot express.
- */
-function SeriesContextCard({ project }: { project: ProjectFile }) {
-  const { settings } = useStore()
-  const { notes, loaded } = useNotes()
-  const series = findSeries(notes, project.project.seriesId)
-  const templateTakesContext = settings.promptTemplate.includes(CONTEXT_PLACEHOLDER)
-
-  const assign = (value: string): void => {
-    if (value === NEW_SERIES) {
-      const name = prompt('Name of the series', project.project.name)
-      if (name === null) return
-      const id = createSeries(name)
-      if (id !== '') setMeta({ seriesId: id, seriesName: name.trim() })
-      return
-    }
-    const picked = findSeries(notes, value)
-    setMeta({ seriesId: picked?.id ?? '', seriesName: picked?.name ?? '' })
-  }
-
-  return (
-    <div class="card">
-      <h2>Series &amp; context</h2>
-      <div class="fields">
-        <div>
-          <label for="series">Series</label>
-          <select
-            id="series"
-            disabled={!loaded}
-            value={series ? series.id : ''}
-            onChange={(e) => assign(e.currentTarget.value)}
-          >
-            <option value="">Not part of a series</option>
-            {sortedSeries(notes).map((s) => (
-              <option value={s.id} key={s.id}>
-                {s.name} ({s.terms.length} terms)
-              </option>
-            ))}
-            <option value={NEW_SERIES}>New series…</option>
-          </select>
-        </div>
-      </div>
-
-      {project.project.seriesId !== '' && !series && loaded && (
-        <Banner kind="warn">
-          This project belongs to “{project.project.seriesName || project.project.seriesId}”,
-          which is not in this browser's notes. Import it on the{' '}
-          <a href="#/notes">Notes page</a> to reconnect, or pick another series above.
-        </Banner>
-      )}
-
-      {series && series.context.trim() !== '' && (
-        <div style="margin-top:12px">
-          <label>Inherited from {series.name}</label>
-          <p class="muted" style="white-space:pre-wrap;margin:0">
-            {series.context}
-          </p>
-        </div>
-      )}
-
-      <div style="margin-top:12px">
-        <label for="context">Additional context for this project</label>
-        <textarea
-          id="context"
-          rows={4}
-          placeholder="e.g. This volume is a flashback. Kenji narrates. Signs in the background can stay untranslated."
-          value={project.project.context}
-          onInput={(e) => setMeta({ context: e.currentTarget.value })}
-        />
-      </div>
-
-      {!templateTakesContext && project.project.context.trim() !== '' && (
-        <Banner kind="warn">
-          Your prompt template has no {CONTEXT_PLACEHOLDER} placeholder, so this text is
-          not being sent. Add it on the <a href="#/settings">Settings page</a>.
-        </Banner>
-      )}
-
-      <div style="margin-top:14px">
-        <NotesTransfer project={project} />
-      </div>
-    </div>
-  )
-}
-
 function PdfResolutionCard() {
   const { source } = useStore()
   const [edge, setEdge] = useState(source?.pdfRenderEdge ?? 2400)
@@ -463,12 +294,12 @@ function PdfResolutionCard() {
 }
 
 /**
- * Ways out of the browser.
+ * The images-only way out of the browser.
  *
  * Autosave already writes the JSON beside the images for a folder project, but a
  * project imported from a single file or a PDF has no folder to write into -- its
- * pages are in memory and its JSON is in IndexedDB. These buttons are the only way
- * that work leaves this browser profile, so they are offered for every project kind.
+ * pages are in memory. This is offered for every project kind; grabbing the JSON
+ * itself is a separate action on the Translate view.
  */
 function ExportCard() {
   const { project, source } = useStore()
@@ -479,13 +310,13 @@ function ExportCard() {
 
   const canPickFolder = isFsaSupported()
 
-  async function saveCopy() {
+  async function save() {
     setNote(null)
     setFailure(null)
     setProgress({ done: 0, total: project!.pages.length, name: '' })
     try {
-      const result = await saveCopyToFolder(source!, project!, setProgress)
-      if (result) setNote(`Copied ${result.pages} page(s) into ${result.folder}.`)
+      const result = await saveImagesToFolder(source!, project!, setProgress)
+      if (result) setNote(`Saved ${result.pages} page(s) into ${result.folder}.`)
     } catch (err) {
       setFailure(err instanceof Error ? err.message : String(err))
     } finally {
@@ -497,21 +328,17 @@ function ExportCard() {
     <div class="card">
       <h2>Export</h2>
       <p class="muted" style="margin-top:-6px">
-        Saving a copy writes the page images and <span class="mono">translation.json</span>{' '}
-        into a folder you pick, renumbering the files if needed so the copy opens in this
-        same reading order.
+        Saves the page images into a folder you pick, under their current names. Grab{' '}
+        <span class="mono">translation.json</span> from the Translate page to go with them.
       </p>
       {failure && <Banner kind="error">{failure}</Banner>}
       <div class="row" style="margin-top:14px">
-        <button onClick={() => downloadProjectJson(project, source.jsonName)}>
-          Download {source.jsonName}
-        </button>
         <button
           class="primary"
           disabled={!canPickFolder || progress !== null}
-          onClick={() => void saveCopy()}
+          onClick={() => void save()}
         >
-          {progress ? 'Saving…' : 'Save a copy to a folder…'}
+          {progress ? 'Saving…' : 'Save images to folder…'}
         </button>
         {progress && (
           <span class="muted">
@@ -520,9 +347,7 @@ function ExportCard() {
         )}
         {!progress && note && <span class="muted">{note}</span>}
         {!canPickFolder && (
-          <span class="muted">
-            This browser cannot pick a folder, so only the JSON download is available.
-          </span>
+          <span class="muted">This browser cannot pick a folder to save into.</span>
         )}
       </div>
     </div>
@@ -554,10 +379,6 @@ function PageCard({ page, position, last }: { page: Page; position: number; last
   )
 }
 
-function setMeta(patch: Partial<ProjectFile['project']>): void {
-  updateProject((p) => ({ ...p, project: { ...p.project, ...patch } }))
-}
-
 /** Swap a page with its neighbour, then renumber so `index` stays contiguous. */
 function move(file: string, delta: number): void {
   updateProject((project) => {
@@ -577,9 +398,4 @@ function toggleExcluded(file: string): void {
     ...project,
     pages: project.pages.map((p) => (p.file === file ? { ...p, excluded: !p.excluded } : p)),
   }))
-}
-
-function clamp(n: number, min: number, max: number): number {
-  if (!Number.isFinite(n)) return min
-  return Math.min(max, Math.max(min, Math.round(n)))
 }
