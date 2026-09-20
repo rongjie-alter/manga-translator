@@ -10,7 +10,7 @@ import {
 } from '../fs/handles'
 import type { RememberedProject } from '../fs/handles'
 import { projectSourceFromDrop } from '../fs/drop-project'
-import { deleteMemoryProject } from '../fs/file-source'
+import { deleteMemoryProject, openClipboardProject } from '../fs/file-source'
 import { openThreadProject, parseThreadUrl, threadProjectId } from '../fs/thread-project'
 import {
   closeProject,
@@ -23,6 +23,7 @@ import {
   type SessionProjectEntry,
 } from '../state/store'
 import { Banner } from './common'
+import { describeRejection, imagesFrom, isEditable } from './incoming'
 
 export function ProjectsView() {
   const { project, source } = useStore()
@@ -143,6 +144,25 @@ export function ProjectsView() {
     }
   }, [])
 
+  // Pasting images anywhere on this view starts a new project too, the same as the
+  // whole-page drop above -- scoped to this view's lifetime so it never competes
+  // with ScanView's own paste handling for an open project.
+  useEffect(() => {
+    function onPaste(event: ClipboardEvent) {
+      if (isEditable(event.target)) return
+      const incoming = imagesFrom(event.clipboardData)
+      if (incoming.blobs.length === 0) {
+        const why = describeRejection(incoming)
+        if (why) setProblem(why)
+        return
+      }
+      event.preventDefault()
+      void open(() => openClipboardProject(incoming.blobs as File[]))
+    }
+    document.addEventListener('paste', onPaste)
+    return () => document.removeEventListener('paste', onPaste)
+  }, [])
+
   return (
     <div>
       {dragging && (
@@ -240,6 +260,13 @@ export function ProjectsView() {
             >
               {busy && progress ? progress : 'Import thread'}
             </button>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">
+          <div class="dropzone">
+            <strong>Press Ctrl+V to paste one or more images</strong>
+            <span class="muted">Starts a new project from the pasted images.</span>
           </div>
         </div>
       </div>

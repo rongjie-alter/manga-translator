@@ -82,6 +82,7 @@ class MemoryProjectSource implements ProjectSource {
     /** Pages that come from the picked file itself, when it is not a PDF. */
     private readonly basePages: PageSource[],
     pdfState: PdfState | null = null,
+    readonly startedFromClipboard: boolean = false,
   ) {
     this.jsonName = jsonNameForFile(name)
     this.pdfState = pdfState
@@ -176,6 +177,22 @@ export async function openImagesProject(
 ): Promise<ProjectSource> {
   requestDurableStorage()
   return new MemoryProjectSource(name, projectId, await imagePages(files))
+}
+
+/**
+ * Turn pasted images into a new project -- the clipboard equivalent of dropping a
+ * group of images (`openImagesProject`), but flagged so ScanView can tell the two
+ * apart afterwards: only a project started this way offers "Add pages".
+ */
+export async function openClipboardProject(files: File[]): Promise<ProjectSource> {
+  requestDurableStorage()
+  return new MemoryProjectSource(
+    'Pasted pages',
+    'paste:' + crypto.randomUUID(),
+    await imagePages(files),
+    null,
+    true,
+  )
 }
 
 /**

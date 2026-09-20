@@ -98,8 +98,9 @@ export function ScanView() {
  * Getting more pages into an open project.
  *
  * Three gestures, one code path: paste, drop, and a file picker. The card hides
- * entirely when the source cannot accept pages, which is the whole reason
- * `addImage` is optional on `ProjectSource`.
+ * entirely unless the project was started by pasting into the Projects view --
+ * every source implements `addImage`, but only a paste-started project treats
+ * pasting more pages as its primary workflow.
  */
 function AddPagesCard() {
   const { source } = useStore()
@@ -108,7 +109,7 @@ function AddPagesCard() {
   const [note, setNote] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
-  const canAdd = Boolean(source?.addImage)
+  const canAdd = Boolean(source?.startedFromClipboard)
 
   async function take(blobs: Blob[]) {
     setBusy(true)

@@ -43,6 +43,14 @@ export interface ProjectSource {
    */
   addImage?(name: string, blob: Blob): Promise<AddedImage>
   /**
+   * True when this project's pages came from pasting images directly into the
+   * Projects view, with no folder, file, or drop behind it. ScanView keys the "Add
+   * pages" card off this specifically, not `addImage` -- every source implements
+   * `addImage` today, but pasting more pages only makes sense as the primary
+   * workflow for a project that started as a loose paste.
+   */
+  readonly startedFromClipboard?: boolean
+  /**
    * Current render edge for a PDF-backed source, in pixels. Absent for a source that
    * is not rasterized from a PDF, which is how the UI decides whether to offer a
    * resolution control at all.

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { deleteMemoryProject, fileProjectId, isPdfFile, openFileProject, openImagesProject } from '../fs/file-source'
+import {
+  deleteMemoryProject,
+  fileProjectId,
+  isPdfFile,
+  openClipboardProject,
+  openFileProject,
+  openImagesProject,
+} from '../fs/file-source'
 import { reconcile, readDiskPages } from '../fs/project-file'
 import { FOLDER_JSON_NAME } from '../fs/source'
 import { migrate, newProjectFile } from '../state/schema'
@@ -98,6 +105,30 @@ describe('openImagesProject', () => {
     const [keyB] = vi.mocked(idbSet).mock.calls[1]!
     expect(keyA).toBe(keyB)
     expect(keyA).toBe('project:thread:twitter:1')
+  })
+})
+
+describe('openClipboardProject', () => {
+  it('flags the project as started from clipboard', async () => {
+    const source = await openClipboardProject([png('a.png')])
+    expect(source.startedFromClipboard).toBe(true)
+  })
+
+  it('leaves other sources unflagged', async () => {
+    expect((await openImagesProject([png('a.png')], 'Dropped pages')).startedFromClipboard).toBeFalsy()
+    expect((await openFileProject(png('cover.png'))).startedFromClipboard).toBeFalsy()
+  })
+
+  it('defaults to a fresh random id on every call, like a drop', async () => {
+    const a = await openClipboardProject([png('a.png')])
+    const b = await openClipboardProject([png('a.png')])
+
+    await a.writeJson('{"a":1}')
+    await b.writeJson('{"b":1}')
+
+    const [keyA] = vi.mocked(idbSet).mock.calls[0]!
+    const [keyB] = vi.mocked(idbSet).mock.calls[1]!
+    expect(keyA).not.toBe(keyB)
   })
 })
 
