@@ -270,6 +270,12 @@ function EndpointEditor({ endpoint }: { endpoint: Endpoint }) {
             value={endpoint.apiKey}
             onInput={(e) => patch({ apiKey: e.currentTarget.value })}
           />
+          {endpoint.kind == "gemini" && (
+            <p class="muted" style="margin:4px 0 0">
+              Keys stay in this browser and are sent only to the endpoint above. They are never included in exported translation files.
+              {" "}<a href="https://aistudio.google.com/api-keys" target="_blank">Get a key.</a>
+            </p>
+          )}
         </div>
         <div>
           <label>Provider</label>
