@@ -106,8 +106,12 @@ export function TranslateView() {
               Stop
             </button>
           )}
-          <button onClick={() => navigate('review')}>Review</button>
-          <button onClick={() => navigate('read')}>Read</button>
+          {counts.translated > 0 && (
+            <>
+              <button onClick={() => navigate('review')}>Review</button>
+              <button onClick={() => navigate('read')}>Read</button>
+            </>
+          )}
         </div>
       </div>
 
