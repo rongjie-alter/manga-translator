@@ -238,6 +238,7 @@ export function SettingsView() {
 
 function EndpointEditor({ endpoint }: { endpoint: Endpoint }) {
   const { settings } = useStore()
+  const [showKey, setShowKey] = useState(false)
   const patch = (change: Partial<Endpoint>) =>
     updateSettings({
       endpoints: settings.endpoints.map((e) => (e.id === endpoint.id ? { ...e, ...change } : e)),
@@ -262,14 +263,25 @@ function EndpointEditor({ endpoint }: { endpoint: Endpoint }) {
             onInput={(e) => patch({ baseUrl: e.currentTarget.value })}
           />
         </div>
-        <div style="grid-column:1/-1">
+        <div style="grid-column:1/3">
           <label>API key</label>
-          <input
-            type="password"
-            autocomplete="off"
-            value={endpoint.apiKey}
-            onInput={(e) => patch({ apiKey: e.currentTarget.value })}
-          />
+          <div class="row" style="gap:8px">
+            <input
+              type={showKey ? 'text' : 'password'}
+              autocomplete="off"
+              value={endpoint.apiKey}
+              onInput={(e) => patch({ apiKey: e.currentTarget.value })}
+              style="flex:1"
+            />
+            <button
+              type="button"
+              class="small"
+              style="flex-shrink:0"
+              onClick={() => setShowKey((v) => !v)}
+            >
+              {showKey ? 'Hide' : 'Show'}
+            </button>
+          </div>
           {endpoint.kind == "gemini" && (
             <p class="muted" style="margin:4px 0 0">
               Keys stay in this browser and are sent only to the endpoint above. They are never included in exported translation files.
