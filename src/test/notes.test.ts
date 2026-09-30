@@ -17,6 +17,7 @@ import {
   getNotes,
   importNotes,
   initNotes,
+  inspectNotesImport,
   mergeNotes,
   migrateNotes,
   parseImport,
@@ -188,7 +189,64 @@ describe('mergeNotes', () => {
     const merged = mergeNotes({ version: 1, series: [series()] }, [series({ id: 's2', name: 'Other' })])
     expect(merged.series.map((s) => s.name)).toEqual(['Blue Period', 'Other'])
   })
+
+  it('respects "keep" policy by retaining local terms and instructions', () => {
+    const existing = { version: 1, series: [series({ context: 'local context', terms: [term({ translation: 'Lina' })] })] }
+    const incoming = [series({ context: 'remote context', terms: [term({ translation: 'Rina' }), { term: 'ユウ', translation: 'Yuu', note: '', locked: true }] })]
+
+    const merged = mergeNotes(existing, incoming, 'keep')
+    expect(merged.series[0]!.context).toBe('local context')
+    expect(merged.series[0]!.terms.find((t) => t.term === 'リナ')?.translation).toBe('Lina')
+    expect(merged.series[0]!.terms.find((t) => t.term === 'ユウ')?.translation).toBe('Yuu')
+  })
+
+  it('respects "replace" policy by dropping existing series entirely', () => {
+    const existing = { version: 1, series: [series({ id: 's1', name: 'Old' })] }
+    const incoming = [series({ id: 's2', name: 'New' })]
+
+    const merged = mergeNotes(existing, incoming, 'replace')
+    expect(merged.series.map((s) => s.name)).toEqual(['New'])
+  })
 })
+
+describe('inspectNotesImport', () => {
+  it('detects duplicate series and conflicting terms', () => {
+    const existing = {
+      version: 1,
+      series: [series({ id: 's1', name: 'Blue Period', terms: [term({ translation: 'Rina' })] })],
+    }
+    const incoming = [
+      series({ id: 's1', name: 'Blue Period', terms: [term({ translation: 'Lina' }), { term: 'ユウ', translation: 'Yuu', note: '', locked: true }] }),
+      series({ id: 's2', name: 'New Series', terms: [] }),
+    ]
+
+    const inspection = inspectNotesImport(existing, incoming)
+    expect(inspection.totalSeriesCount).toBe(2)
+    expect(inspection.totalTermsCount).toBe(2)
+    expect(inspection.hasConflicts).toBe(true)
+    expect(inspection.conflicts).toHaveLength(1)
+    expect(inspection.conflicts[0]!.seriesName).toBe('Blue Period')
+    expect(inspection.conflicts[0]!.termConflicts).toEqual([
+      {
+        term: 'リナ',
+        localTranslation: 'Rina',
+        importedTranslation: 'Lina',
+        localNote: '',
+        importedNote: '',
+      },
+    ])
+    expect(inspection.conflicts[0]!.newTermsCount).toBe(1)
+  })
+
+  it('returns hasConflicts false when importing non-overlapping series', () => {
+    const existing = { version: 1, series: [series({ id: 's1', name: 'Series A' })] }
+    const incoming = [series({ id: 's2', name: 'Series B' })]
+
+    const inspection = inspectNotesImport(existing, incoming)
+    expect(inspection.hasConflicts).toBe(false)
+  })
+})
+
 
 describe('resolveContext', () => {
   it('puts the series instructions before the volume’s own', () => {

@@ -384,15 +384,99 @@ export function parseImport(raw: unknown): ParsedImport {
   return { kind: 'unknown' }
 }
 
+export type ImportConflictPolicy = 'overwrite' | 'keep' | 'replace'
+
+export interface TermConflict {
+  term: string
+  localTranslation: string
+  importedTranslation: string
+  localNote: string
+  importedNote: string
+}
+
+export interface SeriesConflictInfo {
+  seriesId: string
+  seriesName: string
+  matchingByNameOnly: boolean
+  termConflicts: TermConflict[]
+  newTermsCount: number
+  existingTermsCount: number
+}
+
+export interface NotesImportInspection {
+  totalSeriesCount: number
+  totalTermsCount: number
+  conflicts: SeriesConflictInfo[]
+  hasConflicts: boolean
+}
+
+export function inspectNotesImport(existing: Notes, incoming: Series[]): NotesImportInspection {
+  let totalTermsCount = 0
+  const conflicts: SeriesConflictInfo[] = []
+
+  const byId = new Map(existing.series.map((s) => [s.id, s]))
+  const byName = new Map(existing.series.map((s) => [s.name.toLowerCase(), s]))
+
+  for (const source of incoming) {
+    totalTermsCount += source.terms.length
+    const current = byId.get(source.id) ?? byName.get(source.name.toLowerCase())
+    if (current) {
+      const existingTermMap = new Map(current.terms.map((t) => [t.term, t]))
+      const termConflicts: TermConflict[] = []
+      let newTermsCount = 0
+
+      for (const term of source.terms) {
+        const existingTerm = existingTermMap.get(term.term)
+        if (existingTerm) {
+          if (existingTerm.translation !== term.translation || existingTerm.note !== term.note) {
+            termConflicts.push({
+              term: term.term,
+              localTranslation: existingTerm.translation,
+              importedTranslation: term.translation,
+              localNote: existingTerm.note,
+              importedNote: term.note,
+            })
+          }
+        } else {
+          newTermsCount++
+        }
+      }
+
+      conflicts.push({
+        seriesId: current.id,
+        seriesName: current.name,
+        matchingByNameOnly: !byId.has(source.id) && byName.has(source.name.toLowerCase()),
+        termConflicts,
+        newTermsCount,
+        existingTermsCount: current.terms.length,
+      })
+    }
+  }
+
+  return {
+    totalSeriesCount: incoming.length,
+    totalTermsCount,
+    conflicts,
+    hasConflicts: conflicts.length > 0,
+  }
+}
+
 /**
  * Fold imported series into the existing ones.
  *
  * Matched by `id` first and name second, and incoming ids are never re-minted: a
  * project's `seriesId` points into this store, so a re-import that invented fresh ids
- * would dangle every link the user has. Terms merge with the incoming copy winning,
- * since importing is itself the user saying the file is authoritative.
+ * would dangle every link the user has.
  */
-export function mergeNotes(existing: Notes, incoming: Series[]): Notes {
+export function mergeNotes(
+  existing: Notes,
+  incoming: Series[],
+  policy: ImportConflictPolicy = 'overwrite',
+): Notes {
+  if (policy === 'replace') {
+    return { version: NOTES_VERSION, series: incoming }
+  }
+
   const series = existing.series.slice()
   const byId = new Map(series.map((s, i) => [s.id, i]))
   const byName = new Map(series.map((s, i) => [s.name.toLowerCase(), i]))
@@ -413,13 +497,22 @@ export function mergeNotes(existing: Notes, incoming: Series[]): Notes {
       if (pos === undefined) {
         index.set(term.term, terms.length)
         terms.push(term)
-      } else {
+      } else if (policy === 'overwrite') {
         terms[pos] = term
       }
     }
+    const nextContext =
+      policy === 'overwrite'
+        ? source.context.trim() === ''
+          ? current.context
+          : source.context
+        : current.context.trim() === ''
+          ? source.context
+          : current.context
+
     series[at] = {
       ...current,
-      context: source.context.trim() === '' ? current.context : source.context,
+      context: nextContext,
       terms,
       updatedAt: new Date().toISOString(),
     }
@@ -433,6 +526,7 @@ export function replaceNotes(series: Series[]): void {
   mutate((notes) => ({ ...notes, series }))
 }
 
-export function importNotes(series: Series[]): void {
-  mutate((notes) => mergeNotes(notes, series))
+export function importNotes(series: Series[], policy: ImportConflictPolicy = 'overwrite'): void {
+  mutate((notes) => mergeNotes(notes, series, policy))
 }
+

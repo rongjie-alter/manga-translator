@@ -1,11 +1,3 @@
-/**
- * The notes view: glossary terms and translation instructions kept per series, across
- * projects.
- *
- * Reachable without a project open, because the main reason to come here is to prepare
- * for the next volume or to import someone else's terms.
- */
-
 import { useRef, useState } from 'preact/hooks'
 import { addGlossaryEntries } from '../api/merge'
 import {
@@ -17,15 +9,17 @@ import {
   deleteSeries,
   findSeries,
   importNotes,
+  inspectNotesImport,
   parseImport,
   removeSeriesTerm,
   renameSeries,
-  replaceNotes,
   serializeNotes,
   setSeriesContext,
   sortedSeries,
   updateSeriesTerm,
   useNotes,
+  type ImportConflictPolicy,
+  type NotesImportInspection,
   type Series,
 } from '../state/notes'
 import type { GlossaryEntry } from '../state/schema'
@@ -37,8 +31,125 @@ export function NotesView() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+
+  const [importPending, setImportPending] = useState<
+    | { kind: 'notes'; fileName: string; series: Series[]; inspection: NotesImportInspection }
+    | { kind: 'project'; fileName: string; name: string; terms: GlossaryEntry[] }
+    | null
+  >(null)
+  const [policy, setPolicy] = useState<ImportConflictPolicy>('overwrite')
+  const [targetSeriesId, setTargetSeriesId] = useState<string>('')
+  const [newSeriesName, setNewSeriesName] = useState<string>('')
+
   const all = sortedSeries(notes)
   const selected = findSeries(notes, selectedId ?? '') ?? all[0]
+
+  const openFilePicker = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: Event) => {
+    const input = e.currentTarget as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+
+    let raw: unknown
+    try {
+      raw = JSON.parse(await file.text())
+    } catch {
+      setNote(file.name + ' is not valid JSON.')
+      return
+    }
+
+    const parsed = parseImport(raw)
+    if (parsed.kind === 'unknown') {
+      setNote(file.name + ' is neither a notes export nor a project file.')
+      return
+    }
+
+    if (parsed.kind === 'notes') {
+      if (parsed.series.length === 0) {
+        setNote(file.name + ' has no series in it.')
+        return
+      }
+      const inspection = inspectNotesImport(notes, parsed.series)
+      setImportPending({
+        kind: 'notes',
+        fileName: file.name,
+        series: parsed.series,
+        inspection,
+      })
+      setPolicy('overwrite')
+      if (typeof dialogRef.current?.showModal === 'function') {
+        dialogRef.current.showModal()
+      }
+      return
+    }
+
+    if (parsed.kind === 'project') {
+      if (parsed.terms.length === 0) {
+        setNote(file.name + ' has no glossary terms in it.')
+        return
+      }
+      setImportPending({
+        kind: 'project',
+        fileName: file.name,
+        name: parsed.name,
+        terms: parsed.terms,
+      })
+      const defaultSeries = findSeries(notes, selectedId ?? '') ?? all[0]
+      setTargetSeriesId(defaultSeries ? defaultSeries.id : '__new__')
+      setNewSeriesName(parsed.name)
+      if (typeof dialogRef.current?.showModal === 'function') {
+        dialogRef.current.showModal()
+      }
+      return
+    }
+  }
+
+  const closeDialog = () => {
+    if (typeof dialogRef.current?.close === 'function') {
+      dialogRef.current.close()
+    }
+    setImportPending(null)
+  }
+
+  const handleConfirmNotesImport = () => {
+    if (!importPending || importPending.kind !== 'notes') return
+    const count = importPending.series.length
+    importNotes(importPending.series, policy)
+    closeDialog()
+    const modeText =
+      policy === 'replace'
+        ? 'Replaced Notes with '
+        : policy === 'keep'
+          ? 'Merged (kept existing) '
+          : 'Merged (overwrote duplicates) '
+    setNote(modeText + count + ' series from ' + importPending.fileName + '.')
+  }
+
+  const handleConfirmProjectImport = () => {
+    if (!importPending || importPending.kind !== 'project') return
+    let sid = targetSeriesId
+    let sname = ''
+    if (sid === '__new__') {
+      sid = createSeries(newSeriesName)
+      if (sid === '') {
+        setNote('A series needs a name.')
+        return
+      }
+      sname = newSeriesName.trim()
+    } else {
+      sname = findSeries(notes, sid)?.name ?? ''
+    }
+    const result = addSeriesTerms(sid, importPending.terms)
+    setSelectedId(sid)
+    closeDialog()
+    setNote(result.added + ' term(s) imported into “' + sname + '”.')
+  }
 
   return (
     <div>
@@ -79,9 +190,18 @@ export function NotesView() {
                 disabled={notes.series.length === 0}
                 onClick={() => downloadNotes(serializeNotes(notes))}
               >
-                Export {NOTES_FILE_NAME}
+                Export all notes
               </button>
-              <ImportButton onNote={setNote} onSelect={setSelectedId} />
+              <button onClick={openFilePicker}>
+                Import all notes…
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                style="display:none"
+                onChange={handleFileChange}
+              />
               <span class="spacer" style="flex:1" />
               <span class="muted">{notes.series.length} series</span>
             </div>
@@ -91,6 +211,165 @@ export function NotesView() {
               </p>
             )}
           </div>
+
+          <dialog
+            ref={dialogRef}
+            class="import-dialog"
+            onCancel={(e) => {
+              e.preventDefault()
+              closeDialog()
+            }}
+          >
+            {importPending?.kind === 'notes' && (
+              <div>
+                <h2 style="margin-top:0">Import Notes</h2>
+                <p class="muted">
+                  File <span class="mono">{importPending.fileName}</span> contains{' '}
+                  <strong>{importPending.inspection.totalSeriesCount}</strong> series and{' '}
+                  <strong>{importPending.inspection.totalTermsCount}</strong> terms.
+                </p>
+
+                {importPending.inspection.hasConflicts && (
+                  <div class="banner warn" style="margin:12px 0">
+                    <strong style="display:block;margin-bottom:4px">
+                      Duplicate / Conflicting series found
+                    </strong>
+                    <div style="font-size:12px">
+                      {importPending.inspection.conflicts.map((c) => (
+                        <div key={c.seriesId} style="margin-top:6px">
+                          • <strong>{c.seriesName}</strong> ({c.existingTermsCount} existing terms
+                          {c.newTermsCount > 0 ? `, ${c.newTermsCount} new` : ''})
+                          {c.termConflicts.length > 0 && (
+                            <ul style="margin:4px 0 0 16px;padding:0">
+                              {c.termConflicts.map((tc) => (
+                                <li key={tc.term}>
+                                  Term <span class="mono">{tc.term}</span>: local{' '}
+                                  <em>“{tc.localTranslation}”</em> vs imported{' '}
+                                  <em>“{tc.importedTranslation}”</em>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div style="margin-top:16px">
+                  <label style="font-weight:600;color:var(--text);margin-bottom:8px">
+                    How should duplicate series and terms be handled?
+                  </label>
+                  <div class="grid" style="gap:10px">
+                    <label class="check">
+                      <input
+                        type="radio"
+                        name="policy"
+                        value="overwrite"
+                        checked={policy === 'overwrite'}
+                        onChange={() => setPolicy('overwrite')}
+                      />
+                      <span>
+                        <strong>Merge & overwrite duplicates</strong>
+                        <br />
+                        <span class="muted" style="font-size:12px">
+                          Imported terms and series instructions overwrite local conflicting values.
+                        </span>
+                      </span>
+                    </label>
+                    <label class="check">
+                      <input
+                        type="radio"
+                        name="policy"
+                        value="keep"
+                        checked={policy === 'keep'}
+                        onChange={() => setPolicy('keep')}
+                      />
+                      <span>
+                        <strong>Merge & keep existing</strong>
+                        <br />
+                        <span class="muted" style="font-size:12px">
+                          Preserve local terms and series instructions; only import new series and terms.
+                        </span>
+                      </span>
+                    </label>
+                    <label class="check">
+                      <input
+                        type="radio"
+                        name="policy"
+                        value="replace"
+                        checked={policy === 'replace'}
+                        onChange={() => setPolicy('replace')}
+                      />
+                      <span>
+                        <strong>Replace all notes</strong>
+                        <br />
+                        <span class="muted" style="font-size:12px">
+                          Wipe out all current notes and replace with the imported file.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="row" style="margin-top:20px;justify-content:flex-end;gap:8px">
+                  <button onClick={closeDialog}>Cancel</button>
+                  <button class="primary" onClick={handleConfirmNotesImport}>
+                    Import
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {importPending?.kind === 'project' && (
+              <div>
+                <h2 style="margin-top:0">Import Glossary from Project</h2>
+                <p class="muted">
+                  Found <strong>{importPending.terms.length}</strong> term(s) in project file{' '}
+                  <span class="mono">{importPending.fileName}</span>.
+                </p>
+
+                <div style="margin-top:12px">
+                  <label for="import-target-series">Series to file terms under</label>
+                  <select
+                    id="import-target-series"
+                    value={targetSeriesId}
+                    onChange={(e) => setTargetSeriesId(e.currentTarget.value)}
+                  >
+                    {all.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.terms.length} terms)
+                      </option>
+                    ))}
+                    <option value="__new__">+ Create new series…</option>
+                  </select>
+                </div>
+
+                {targetSeriesId === '__new__' && (
+                  <div style="margin-top:12px">
+                    <label for="new-series-name">New series name</label>
+                    <input
+                      id="new-series-name"
+                      value={newSeriesName}
+                      onInput={(e) => setNewSeriesName(e.currentTarget.value)}
+                      placeholder="e.g. Blue Period"
+                    />
+                  </div>
+                )}
+
+                <div class="row" style="margin-top:20px;justify-content:flex-end;gap:8px">
+                  <button onClick={closeDialog}>Cancel</button>
+                  <button
+                    class="primary"
+                    disabled={targetSeriesId === '__new__' && newSeriesName.trim() === ''}
+                    onClick={handleConfirmProjectImport}
+                  >
+                    Import terms
+                  </button>
+                </div>
+              </div>
+            )}
+          </dialog>
 
           {all.length === 0 ? (
             <div class="empty">
@@ -326,92 +605,6 @@ function AddTermForm({ seriesId, onDone }: { seriesId: string; onDone: () => voi
   )
 }
 
-/**
- * Import a notes export, or harvest the glossary out of a project file.
- *
- * The second case is the migration path for volumes translated before any of this
- * existed, when the only copy of their terms is the `translation.json` beside them.
- */
-function ImportButton({
-  onNote,
-  onSelect,
-}: {
-  onNote: (message: string) => void
-  onSelect: (id: string) => void
-}) {
-  const input = useRef<HTMLInputElement>(null)
-
-  const read = async (file: File): Promise<void> => {
-    let raw: unknown
-    try {
-      raw = JSON.parse(await file.text())
-    } catch {
-      onNote(file.name + ' is not valid JSON.')
-      return
-    }
-
-    const parsed = parseImport(raw)
-    if (parsed.kind === 'unknown') {
-      onNote(file.name + ' is neither a notes export nor a project file.')
-      return
-    }
-
-    if (parsed.kind === 'notes') {
-      const count = parsed.series.length
-      if (count === 0) {
-        onNote(file.name + ' has no series in it.')
-        return
-      }
-      const replace = confirm(
-        'Import ' +
-          count +
-          ' series from ' +
-          file.name +
-          '.\n\nOK: replace everything currently in Notes.\nCancel: merge into what is already here.',
-      )
-      if (replace) replaceNotes(parsed.series)
-      else importNotes(parsed.series)
-      onNote((replace ? 'Replaced Notes with ' : 'Merged in ') + count + ' series.')
-      return
-    }
-
-    if (parsed.terms.length === 0) {
-      onNote(file.name + ' has no glossary terms in it.')
-      return
-    }
-    const name = prompt(
-      'Found ' + parsed.terms.length + ' term(s) in ' + file.name + '.\n\nFile them under which series?',
-      parsed.name,
-    )
-    if (name === null) return
-    const id = createSeries(name)
-    if (id === '') {
-      onNote('A series needs a name.')
-      return
-    }
-    const result = addSeriesTerms(id, parsed.terms)
-    onSelect(id)
-    onNote(result.added + ' term(s) imported into “' + name + '”.')
-  }
-
-  return (
-    <>
-      <button onClick={() => input.current?.click()}>Import…</button>
-      <input
-        ref={input}
-        type="file"
-        accept="application/json,.json"
-        style="display:none"
-        onChange={(e) => {
-          const file = e.currentTarget.files?.[0]
-          e.currentTarget.value = ''
-          if (file) void read(file)
-        }}
-      />
-    </>
-  )
-}
-
 /** Same temporary-anchor trick `fs/export.ts` uses for the project JSON. */
 function downloadNotes(text: string): void {
   const blob = new Blob([text], { type: 'application/json' })
@@ -424,3 +617,4 @@ function downloadNotes(text: string): void {
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
+
