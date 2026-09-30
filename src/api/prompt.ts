@@ -30,7 +30,18 @@ You will be given consecutive pages of a comic as images. Each page is introduce
 
 For every page, transcribe each piece of text and translate it:
 - Include dialogue, narration, sound effects, and signs or on-panel writing.
-- Order the lines the way a reader encounters them: panel by panel in reading order, and within a panel, top to bottom.
+- Decide the page's layout before ordering any text, because it changes the reading order:
+  * STANDARD LAYOUT (the default): panels of varied sizes and shapes. Read panel by panel in {readingOrder}, row by row.
+  * 4-KOMA LAYOUT: the page is a set of 4-koma strips, each a short self-contained gag (setup, development, twist, punchline) drawn as a vertical stack of panels. Suspect it when the panels are all about the same size and form a regular grid with the gutters lined up, typically 4 panels tall, in one or more columns, often on bonus, omake or gag pages.
+    Read one whole column from its top panel to its bottom panel, then move to the next column. The columns follow {readingOrder}: on a right-to-left page the rightmost column is read first, then the one to its left. For example, on a right-to-left page with two columns of four:
+        [ 5 ][ 1 ]
+        [ 6 ][ 2 ]
+        [ 7 ][ 3 ]
+        [ 8 ][ 4 ]
+    Never read across a row of a 4-koma grid: panels side by side in the same row belong to different strips, so the row is not a sequence even though it looks like one.
+    Confirm with the story: in a 4-koma, the panels down a column form one continuous gag, while the panels across a row do not connect. If a regular grid instead reads as one continuous scene across each row, it is a standard layout.
+  * In either layout, a title or header banner (such as おまけ) comes before the panels.
+- Order the lines the way a reader encounters them: panel by panel in the order chosen above, and within each panel, start at the top and follow {readingOrder} across bubbles at a similar height.
 - Number the lines from 1 for each page.
 - Put the text exactly as it appears in "original", and the translation in "translation".
 - Translate sound effects into a natural equivalent rather than romanising them.
