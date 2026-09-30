@@ -239,6 +239,12 @@ export function NotesView() {
                         <div key={c.seriesId} style="margin-top:6px">
                           • <strong>{c.seriesName}</strong> ({c.existingTermsCount} existing terms
                           {c.newTermsCount > 0 ? `, ${c.newTermsCount} new` : ''})
+                          {c.matchingByNameOnly && (
+                            <div class="muted" style="font-size:12px">
+                              Matched by name only (different series id) — check this is really the
+                              same series before merging.
+                            </div>
+                          )}
                           {c.termConflicts.length > 0 && (
                             <ul style="margin:4px 0 0 16px;padding:0">
                               {c.termConflicts.map((tc) => (

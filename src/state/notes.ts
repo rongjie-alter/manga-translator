@@ -412,7 +412,7 @@ export interface NotesImportInspection {
 
 export function inspectNotesImport(existing: Notes, incoming: Series[]): NotesImportInspection {
   let totalTermsCount = 0
-  const conflicts: SeriesConflictInfo[] = []
+  const conflictsBySeriesId = new Map<string, SeriesConflictInfo>()
 
   const byId = new Map(existing.series.map((s) => [s.id, s]))
   const byName = new Map(existing.series.map((s) => [s.name.toLowerCase(), s]))
@@ -442,16 +442,26 @@ export function inspectNotesImport(existing: Notes, incoming: Series[]): NotesIm
         }
       }
 
-      conflicts.push({
-        seriesId: current.id,
-        seriesName: current.name,
-        matchingByNameOnly: !byId.has(source.id) && byName.has(source.name.toLowerCase()),
-        termConflicts,
-        newTermsCount,
-        existingTermsCount: current.terms.length,
-      })
+      const matchingByNameOnly = !byId.has(source.id) && byName.has(source.name.toLowerCase())
+      const prior = conflictsBySeriesId.get(current.id)
+      if (prior) {
+        prior.termConflicts.push(...termConflicts)
+        prior.newTermsCount += newTermsCount
+        prior.matchingByNameOnly = prior.matchingByNameOnly || matchingByNameOnly
+      } else {
+        conflictsBySeriesId.set(current.id, {
+          seriesId: current.id,
+          seriesName: current.name,
+          matchingByNameOnly,
+          termConflicts,
+          newTermsCount,
+          existingTermsCount: current.terms.length,
+        })
+      }
     }
   }
+
+  const conflicts = [...conflictsBySeriesId.values()]
 
   return {
     totalSeriesCount: incoming.length,
@@ -519,11 +529,6 @@ export function mergeNotes(
   }
 
   return { ...existing, series }
-}
-
-/** Replace everything. The view confirms first; this is the point of no return. */
-export function replaceNotes(series: Series[]): void {
-  mutate((notes) => ({ ...notes, series }))
 }
 
 export function importNotes(series: Series[], policy: ImportConflictPolicy = 'overwrite'): void {
