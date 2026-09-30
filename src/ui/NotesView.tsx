@@ -260,7 +260,7 @@ export function NotesView() {
                   <label style="font-weight:600;color:var(--text);margin-bottom:8px">
                     How should duplicate series and terms be handled?
                   </label>
-                  <div class="grid" style="gap:10px">
+                  <div class="grid" style="gap:10px;grid-template-columns:1fr">
                     <label class="check">
                       <input
                         type="radio"
