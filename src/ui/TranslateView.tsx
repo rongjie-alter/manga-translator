@@ -14,18 +14,23 @@ import type { Dimensions } from '../fs/images'
 import { NotesTransfer } from './NotesTransfer'
 import { createSeries, findSeries, resolveContext, sortedSeries, useNotes } from '../state/notes'
 import {
-  SOURCE_LANG_NAMES,
-  TARGET_LANG_NAMES,
   effectiveStatus,
   translatablePages,
   type ProjectFile,
   type ReadingDirection,
-  type SourceLang,
-  type TargetLang,
 } from '../state/schema'
 import { activeEndpoint } from '../state/settings'
-import { cancelRun, loadPageBlob, setMeta, startRun, updateProject, useStore } from '../state/store'
+import {
+  cancelRun,
+  chooseLang,
+  loadPageBlob,
+  setMeta,
+  startRun,
+  updateProject,
+  useStore,
+} from '../state/store'
 import { Banner, Countdown, STATUS_LABEL, clamp, countByStatus } from './common'
+import { LanguageSelect } from './LanguageSelect'
 
 /** Measuring every page to estimate cost would mean decoding every page. Three is plenty. */
 const SAMPLE_SIZE = 3
@@ -104,35 +109,21 @@ export function TranslateView() {
         <div class="fields">
           <div>
             <label for="src">From</label>
-            <select
+            <LanguageSelect
               id="src"
               value={project.project.sourceLang}
-              onChange={(e) =>
-                setMeta({ sourceLang: e.currentTarget.value as SourceLang })
-              }
-            >
-              {Object.entries(SOURCE_LANG_NAMES).map(([code, name]) => (
-                <option value={code} key={code}>
-                  {name}
-                </option>
-              ))}
-            </select>
+              recent={settings.recentSourceLangs}
+              onChange={(code) => chooseLang('source', code)}
+            />
           </div>
           <div>
             <label for="dst">To</label>
-            <select
+            <LanguageSelect
               id="dst"
               value={project.project.targetLang}
-              onChange={(e) =>
-                setMeta({ targetLang: e.currentTarget.value as TargetLang })
-              }
-            >
-              {Object.entries(TARGET_LANG_NAMES).map(([code, name]) => (
-                <option value={code} key={code}>
-                  {name}
-                </option>
-              ))}
-            </select>
+              recent={settings.recentTargetLangs}
+              onChange={(code) => chooseLang('target', code)}
+            />
           </div>
           <div>
             <label for="dir">Reading direction</label>

@@ -120,6 +120,12 @@ describe('migrate', () => {
     expect(p.usage).toEqual({ calls: 0, promptTokens: 0, completionTokens: 0 })
   })
 
+  it('keeps any listed language as source or target', () => {
+    const p = migrate({ project: { sourceLang: 'zh-Hans', targetLang: 'es' }, pages: [] })
+    expect(p.project.sourceLang).toBe('zh-Hans')
+    expect(p.project.targetLang).toBe('es')
+  })
+
   it('coerces unknown enum values instead of throwing', () => {
     const p = migrate({
       project: { targetLang: 'klingon', readingDirection: 'sideways' },

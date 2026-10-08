@@ -20,7 +20,7 @@ import { loadProject, saveProject, type ReconcileReport } from '../fs/project-fi
 import type { PageSource, ProjectSource } from '../fs/source'
 import { getNotes, resolveContext } from './notes'
 import { Store, useStoreValue } from './observable'
-import { newPage, type ProjectFile } from './schema'
+import { newPage, pushRecent, type LangCode, type ProjectFile } from './schema'
 import { activeEndpoint, loadSettings, saveSettings, type AppSettings } from './settings'
 
 export interface RunState {
@@ -89,6 +89,28 @@ export function updateSettings(patch: Partial<AppSettings>): void {
   const settings = { ...store.get().settings, ...patch }
   saveSettings(settings)
   store.set({ settings })
+}
+
+/** Record a language pick so the pickers offer it first next time. */
+function rememberLang(side: 'source' | 'target', code: LangCode): Partial<AppSettings> {
+  const { settings } = store.get()
+  return side === 'source'
+    ? { recentSourceLangs: pushRecent(settings.recentSourceLangs, code) }
+    : { recentTargetLangs: pushRecent(settings.recentTargetLangs, code) }
+}
+
+/** Change a project's source or target language. */
+export function chooseLang(side: 'source' | 'target', code: LangCode): void {
+  setMeta(side === 'source' ? { sourceLang: code } : { targetLang: code })
+  updateSettings(rememberLang(side, code))
+}
+
+/** Change the language new projects start with. */
+export function chooseDefaultLang(side: 'source' | 'target', code: LangCode): void {
+  updateSettings({
+    ...(side === 'source' ? { sourceLang: code } : { targetLang: code }),
+    ...rememberLang(side, code),
+  })
 }
 
 // -- project lifecycle ------------------------------------------------------

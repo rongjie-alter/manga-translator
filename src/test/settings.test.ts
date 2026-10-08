@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_4KOMA_PROMPT_TEMPLATE } from '../api/prompt'
+import { pushRecent } from '../state/schema'
 import { defaultSettings, mergeSettings } from '../state/settings'
 
 describe('mergeSettings: 4-koma prompt', () => {
@@ -19,6 +20,55 @@ describe('mergeSettings: 4-koma prompt', () => {
       const merged = mergeSettings(defaultSettings(), { fourKomaPromptTemplate: junk })
       expect(merged.fourKomaPromptTemplate).toBe(DEFAULT_4KOMA_PROMPT_TEMPLATE)
     }
+  })
+})
+
+describe('languages', () => {
+  it('starts a new user at Japanese -> English with nothing recent', () => {
+    const s = defaultSettings()
+    expect([s.sourceLang, s.targetLang]).toEqual(['ja', 'en'])
+    expect(s.recentSourceLangs).toEqual([])
+    expect(s.recentTargetLangs).toEqual([])
+  })
+
+  it('accepts any listed language as a default', () => {
+    const merged = mergeSettings(defaultSettings(), { sourceLang: 'zh-Hans', targetLang: 'fr' })
+    expect([merged.sourceLang, merged.targetLang]).toEqual(['zh-Hans', 'fr'])
+  })
+
+  it('falls back to ja/en for an unknown language code', () => {
+    const merged = mergeSettings(defaultSettings(), { sourceLang: 'xx', targetLang: 7 })
+    expect([merged.sourceLang, merged.targetLang]).toEqual(['ja', 'en'])
+  })
+
+  it('sanitises stored recents: unknown dropped, deduped, capped', () => {
+    const merged = mergeSettings(defaultSettings(), {
+      recentSourceLangs: ['ko', 'xx', 'ko', 'fr', 3],
+      recentTargetLangs: ['en', 'fr', 'de', 'es', 'it', 'pt', 'ru'],
+    })
+    expect(merged.recentSourceLangs).toEqual(['ko', 'fr'])
+    expect(merged.recentTargetLangs).toEqual(['en', 'fr', 'de', 'es', 'it'])
+  })
+
+  it('gives a blob saved before recents existed empty lists', () => {
+    const merged = mergeSettings(defaultSettings(), { sourceLang: 'ko' })
+    expect(merged.recentSourceLangs).toEqual([])
+  })
+})
+
+describe('pushRecent', () => {
+  it('puts a new pick first', () => {
+    expect(pushRecent(['fr'], 'ko')).toEqual(['ko', 'fr'])
+  })
+
+  it('moves a repeated pick to the front without duplicating it', () => {
+    expect(pushRecent(['fr', 'ko', 'de'], 'de')).toEqual(['de', 'fr', 'ko'])
+  })
+
+  it('drops the oldest past the cap', () => {
+    expect(pushRecent(['a1', 'a2', 'a3', 'a4', 'a5'] as never, 'ko')).toEqual([
+      'ko', 'a1', 'a2', 'a3', 'a4',
+    ])
   })
 })
 

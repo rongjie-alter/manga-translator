@@ -7,17 +7,12 @@ import {
   renderPrompt,
   type PromptContext,
 } from '../api/prompt'
-import {
-  SOURCE_LANG_NAMES,
-  TARGET_LANG_NAMES,
-  type ReadingDirection,
-  type SourceLang,
-  type TargetLang,
-} from '../state/schema'
+import type { ReadingDirection } from '../state/schema'
 import { resolveContext, useNotes } from '../state/notes'
 import type { Endpoint, EndpointKind } from '../state/settings'
-import { updateSettings, useStore } from '../state/store'
+import { chooseDefaultLang, updateSettings, useStore } from '../state/store'
 import { Banner } from './common'
+import { LanguageSelect } from './LanguageSelect'
 
 export function SettingsView() {
   const { settings, project } = useStore()
@@ -86,31 +81,21 @@ export function SettingsView() {
         <div class="fields">
           <div>
             <label for="s-src">From</label>
-            <select
+            <LanguageSelect
               id="s-src"
               value={settings.sourceLang}
-              onChange={(e) => updateSettings({ sourceLang: e.currentTarget.value as SourceLang })}
-            >
-              {Object.entries(SOURCE_LANG_NAMES).map(([code, name]) => (
-                <option value={code} key={code}>
-                  {name}
-                </option>
-              ))}
-            </select>
+              recent={settings.recentSourceLangs}
+              onChange={(code) => chooseDefaultLang('source', code)}
+            />
           </div>
           <div>
             <label for="s-dst">To</label>
-            <select
+            <LanguageSelect
               id="s-dst"
               value={settings.targetLang}
-              onChange={(e) => updateSettings({ targetLang: e.currentTarget.value as TargetLang })}
-            >
-              {Object.entries(TARGET_LANG_NAMES).map(([code, name]) => (
-                <option value={code} key={code}>
-                  {name}
-                </option>
-              ))}
-            </select>
+              recent={settings.recentTargetLangs}
+              onChange={(code) => chooseDefaultLang('target', code)}
+            />
           </div>
           <div>
             <label for="s-dir">Reading direction</label>

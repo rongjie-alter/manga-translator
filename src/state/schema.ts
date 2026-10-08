@@ -13,8 +13,70 @@
 
 export const SCHEMA_VERSION = 1
 
-export type SourceLang = 'ja' | 'ko'
-export type TargetLang = 'en' | 'zh-Hans' | 'zh-Hant'
+/**
+ * Every language the app can translate from or into. One list serves both directions: a
+ * comic can be in any of them, and nothing about a target language is special.
+ * Names are what the prompt is told, so they are English and unambiguous.
+ */
+export const LANGUAGES = [
+  { code: 'ar', name: 'Arabic' },
+  { code: 'zh-Hans', name: 'Simplified Chinese' },
+  { code: 'zh-Hant', name: 'Traditional Chinese' },
+  { code: 'cs', name: 'Czech' },
+  { code: 'nl', name: 'Dutch' },
+  { code: 'en', name: 'English' },
+  { code: 'tl', name: 'Filipino' },
+  { code: 'fr', name: 'French' },
+  { code: 'de', name: 'German' },
+  { code: 'el', name: 'Greek' },
+  { code: 'he', name: 'Hebrew' },
+  { code: 'hi', name: 'Hindi' },
+  { code: 'id', name: 'Indonesian' },
+  { code: 'it', name: 'Italian' },
+  { code: 'ja', name: 'Japanese' },
+  { code: 'ko', name: 'Korean' },
+  { code: 'ms', name: 'Malay' },
+  { code: 'pl', name: 'Polish' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'ru', name: 'Russian' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'sv', name: 'Swedish' },
+  { code: 'th', name: 'Thai' },
+  { code: 'tr', name: 'Turkish' },
+  { code: 'uk', name: 'Ukrainian' },
+  { code: 'vi', name: 'Vietnamese' },
+] as const
+
+export type LangCode = (typeof LANGUAGES)[number]['code']
+export type SourceLang = LangCode
+export type TargetLang = LangCode
+
+export const LANG_CODES: readonly LangCode[] = LANGUAGES.map((l) => l.code)
+
+export const LANG_NAMES = Object.fromEntries(LANGUAGES.map((l) => [l.code, l.name])) as Record<
+  LangCode,
+  string
+>
+
+export function isLangCode(v: unknown): v is LangCode {
+  return typeof v === 'string' && (LANG_CODES as readonly string[]).includes(v)
+}
+
+export const MAX_RECENT_LANGS = 5
+
+/** Put `code` at the front of a most-recent-first list, without duplicates, capped. */
+export function pushRecent(list: readonly LangCode[], code: LangCode): LangCode[] {
+  return [code, ...list.filter((c) => c !== code)].slice(0, MAX_RECENT_LANGS)
+}
+
+/** Clean a stored recents list: known codes only, no duplicates, capped. */
+export function sanitizeRecents(v: unknown): LangCode[] {
+  if (!Array.isArray(v)) return []
+  const out: LangCode[] = []
+  for (const c of v) if (isLangCode(c) && !out.includes(c)) out.push(c)
+  return out.slice(0, MAX_RECENT_LANGS)
+}
+
 export type ReadingDirection = 'rtl' | 'ltr'
 
 /** Whether a page is readable, and if not, why not. */
@@ -37,17 +99,6 @@ export const PAGE_LAYOUTS: readonly PageLayout[] = ['standard', '4koma']
 export type LineKind = 'dialogue' | 'narration' | 'sfx' | 'sign'
 
 export const LINE_KINDS: readonly LineKind[] = ['dialogue', 'narration', 'sfx', 'sign']
-
-export const TARGET_LANG_NAMES: Record<TargetLang, string> = {
-  en: 'English',
-  'zh-Hans': 'Simplified Chinese',
-  'zh-Hant': 'Traditional Chinese',
-}
-
-export const SOURCE_LANG_NAMES: Record<SourceLang, string> = {
-  ja: 'Japanese',
-  ko: 'Korean',
-}
 
 export interface Line {
   /** Stable within a page. Assigned by the model in reading order. */
@@ -259,8 +310,8 @@ export function migrate(raw: unknown): ProjectFile {
     schemaVersion: SCHEMA_VERSION,
     project: {
       name: str(meta['name'], 'untitled'),
-      sourceLang: oneOf(meta['sourceLang'], ['ja', 'ko'], 'ja'),
-      targetLang: oneOf(meta['targetLang'], ['en', 'zh-Hans', 'zh-Hant'], 'en'),
+      sourceLang: oneOf(meta['sourceLang'], LANG_CODES, 'ja'),
+      targetLang: oneOf(meta['targetLang'], LANG_CODES, 'en'),
       readingDirection: oneOf(meta['readingDirection'], ['rtl', 'ltr'], 'rtl'),
       seriesId: str(meta['seriesId'], ''),
       seriesName: str(meta['seriesName'], ''),

@@ -7,8 +7,7 @@
  */
 
 import {
-  SOURCE_LANG_NAMES,
-  TARGET_LANG_NAMES,
+  LANG_NAMES,
   type GlossaryEntry,
   type ProjectMeta,
 } from '../state/schema'
@@ -99,8 +98,8 @@ export interface PromptContext {
 
 export function renderPrompt(template: string, ctx: PromptContext): string {
   const substitutions: Record<string, string> = {
-    '{sourceLanguage}': SOURCE_LANG_NAMES[ctx.meta.sourceLang],
-    '{targetLanguage}': TARGET_LANG_NAMES[ctx.meta.targetLang],
+    '{sourceLanguage}': LANG_NAMES[ctx.meta.sourceLang],
+    '{targetLanguage}': LANG_NAMES[ctx.meta.targetLang],
     '{readingOrder}':
       ctx.meta.readingDirection === 'rtl'
         ? 'right to left, as Japanese comics are read'

@@ -6,7 +6,14 @@
  */
 
 import { DEFAULT_4KOMA_PROMPT_TEMPLATE, DEFAULT_PROMPT_TEMPLATE } from '../api/prompt'
-import type { ReadingDirection, SourceLang, TargetLang } from './schema'
+import {
+  LANG_CODES,
+  sanitizeRecents,
+  type LangCode,
+  type ReadingDirection,
+  type SourceLang,
+  type TargetLang,
+} from './schema'
 
 /**
  * `gemini` calls Google's native Generative Language REST API (`:generateContent`),
@@ -32,6 +39,9 @@ export interface AppSettings {
   activeEndpointId: string
   sourceLang: SourceLang
   targetLang: TargetLang
+  /** Languages chosen lately, most recent first; shown at the top of each language picker. */
+  recentSourceLangs: LangCode[]
+  recentTargetLangs: LangCode[]
   readingDirection: ReadingDirection
   batchSize: number
   /** Longest edge in pixels for uploaded pages. */
@@ -72,6 +82,8 @@ export function defaultSettings(): AppSettings {
     activeEndpointId: 'gemini',
     sourceLang: 'ja',
     targetLang: 'en',
+    recentSourceLangs: [],
+    recentTargetLangs: [],
     readingDirection: 'rtl',
     batchSize: 4,
     maxEdge: 1600,
@@ -115,8 +127,10 @@ export function mergeSettings(base: AppSettings, raw: unknown): AppSettings {
   return {
     endpoints: endpoints.length > 0 ? endpoints : base.endpoints,
     activeEndpointId: endpoints.some((e) => e.id === active) ? active : (endpoints[0]?.id ?? ''),
-    sourceLang: pick(o['sourceLang'], ['ja', 'ko'], base.sourceLang),
-    targetLang: pick(o['targetLang'], ['en', 'zh-Hans', 'zh-Hant'], base.targetLang),
+    sourceLang: pick(o['sourceLang'], LANG_CODES, base.sourceLang),
+    targetLang: pick(o['targetLang'], LANG_CODES, base.targetLang),
+    recentSourceLangs: sanitizeRecents(o['recentSourceLangs']),
+    recentTargetLangs: sanitizeRecents(o['recentTargetLangs']),
     readingDirection: pick(o['readingDirection'], ['rtl', 'ltr'], base.readingDirection),
     batchSize: int(o['batchSize'], 1, 20, base.batchSize),
     maxEdge: int(o['maxEdge'], 512, 4096, base.maxEdge),
