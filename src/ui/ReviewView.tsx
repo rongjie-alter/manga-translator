@@ -10,6 +10,7 @@ import {
 } from '../api/rename'
 import { addSeriesTerms, findSeries, useNotes } from '../state/notes'
 import {
+  effectiveStatus,
   translatablePages,
   type GlossaryEntry,
   type Line,
@@ -77,7 +78,7 @@ export function ReviewView() {
               aria-current={p.file === page.file ? 'true' : 'false'}
               onClick={() => setSelected(p.file)}
             >
-              <StatusDot status={p.status} />
+              <StatusDot status={effectiveStatus(p)} />
               <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                 {i + 1}. {p.file}
               </span>
@@ -125,9 +126,9 @@ function PageHeader({
   return (
     <div class="card" style="padding:10px 12px">
       <div class="row">
-        <StatusDot status={page.status} />
+        <StatusDot status={effectiveStatus(page)} />
         <strong class="mono">{page.file}</strong>
-        <span class="muted">{STATUS_LABEL[page.status]}</span>
+        <span class="muted">{STATUS_LABEL[effectiveStatus(page)]}</span>
         {edited > 0 && <span class="tag">{edited} edited</span>}
         <span class="spacer" style="flex:1" />
         <button

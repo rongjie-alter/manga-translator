@@ -1,7 +1,7 @@
 /** Small pieces shared by more than one view. */
 
 import { useEffect, useRef, useState } from 'preact/hooks'
-import type { Page, PageStatus } from '../state/schema'
+import { effectiveStatus, type Page, type PageStatus } from '../state/schema'
 import { hasPageBlob, loadPageBlob } from '../state/store'
 import { observeOnce } from './visibility'
 
@@ -90,7 +90,7 @@ export const STATUS_LABEL: Record<PageStatus, string> = {
   translated: 'translated',
   failed: 'failed',
   blocked: 'blocked by the provider',
-  stale: 'image changed since translating',
+  stale: 'image or layout changed since translating',
 }
 
 export function countByStatus(pages: Page[]): Record<PageStatus, number> {
@@ -101,7 +101,7 @@ export function countByStatus(pages: Page[]): Record<PageStatus, number> {
     blocked: 0,
     stale: 0,
   }
-  for (const page of pages) counts[page.status]++
+  for (const page of pages) counts[effectiveStatus(page)]++
   return counts
 }
 

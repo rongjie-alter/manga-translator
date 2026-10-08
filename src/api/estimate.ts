@@ -83,6 +83,28 @@ export function estimateRun(input: EstimateInput): Estimate {
 }
 
 /**
+ * Add up estimates made separately, e.g. one per page layout since each layout has its own
+ * system prompt. Page size is "assumed" only if every part assumed it.
+ */
+export function sumEstimates(parts: Estimate[]): Estimate {
+  const withPages = parts.filter((p) => p.calls > 0)
+  const total = parts.reduce(
+    (sum, p) => ({
+      calls: sum.calls + p.calls,
+      promptTokens: sum.promptTokens + p.promptTokens,
+      completionTokens: sum.completionTokens + p.completionTokens,
+    }),
+    { calls: 0, promptTokens: 0, completionTokens: 0 },
+  )
+  return {
+    ...total,
+    totalTokens: total.promptTokens + total.completionTokens,
+    imageTokensPerPage: withPages[0]?.imageTokensPerPage ?? 0,
+    assumedPageSize: parts.every((p) => p.assumedPageSize),
+  }
+}
+
+/**
  * Free-tier request caps, for the "this will take N days" warning.
  * Source: Google AI Studio's published free-tier limits, which do change.
  */

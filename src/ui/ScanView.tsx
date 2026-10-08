@@ -3,7 +3,7 @@ import { saveImagesToFolder, type CopyProgress } from '../fs/export'
 import { isFsaSupported } from '../fs/handles'
 import { FOLDER_JSON_NAME } from '../fs/source'
 import { fetchThreadImages, parseThreadUrl } from '../fs/thread-project'
-import { orderedPages, type Page } from '../state/schema'
+import { effectiveStatus, orderedPages, type Page, type PageLayout } from '../state/schema'
 import {
   addImages,
   DUPLICATE_IMAGE_REASON,
@@ -38,10 +38,22 @@ function describeSkipped(
 export function ScanView() {
   const { project, source, report } = useStore()
   const [rescanning, setRescanning] = useState(false)
+  // The page whose 4-koma box was clicked last: the other end of a shift-click range.
+  const layoutAnchor = useRef<string | null>(null)
   if (!project || !source) return null
+
+  function onLayoutClick(file: string, checked: boolean, range: boolean): void {
+    const files = orderedPages(project!).map((p) => p.file)
+    const from = range && layoutAnchor.current ? files.indexOf(layoutAnchor.current) : -1
+    const to = files.indexOf(file)
+    layoutAnchor.current = file
+    const picked = from < 0 ? [file] : files.slice(Math.min(from, to), Math.max(from, to) + 1)
+    setLayouts(picked, checked ? '4koma' : 'standard')
+  }
 
   const counts = countByStatus(project.pages)
   const included = project.pages.filter((p) => !p.excluded).length
+  const fourKoma = project.pages.filter((p) => p.layout === '4koma').length
   const canRescan = source.jsonName === FOLDER_JSON_NAME
 
   return (
@@ -106,6 +118,12 @@ export function ScanView() {
           Excluded pages are skipped by the translator, but still shown in the reader. Use
           this for covers, ads and afterwords.
         </p>
+        <p class="muted" style="margin-top:-6px">
+          Tick <strong>4-koma</strong> on gag-strip pages: they are translated together with
+          a prompt that reads each column top to bottom. Shift-click a second box to tick or
+          untick every page in between
+          {fourKoma > 0 && <strong> ({fourKoma} marked)</strong>}.
+        </p>
         <div class="pages">
           {orderedPages(project).map((page, position) => (
             <PageCard
@@ -113,6 +131,7 @@ export function ScanView() {
               page={page}
               position={position}
               last={position === project.pages.length - 1}
+              onLayoutClick={onLayoutClick}
             />
           ))}
         </div>
@@ -474,15 +493,32 @@ function ExportCard() {
   )
 }
 
-function PageCard({ page, position, last }: { page: Page; position: number; last: boolean }) {
+function PageCard({
+  page,
+  position,
+  last,
+  onLayoutClick,
+}: {
+  page: Page
+  position: number
+  last: boolean
+  onLayoutClick: (file: string, checked: boolean, range: boolean) => void
+}) {
   return (
-    <div class={'page-card' + (page.excluded ? ' excluded' : '')}>
+    <div
+      class={
+        'page-card' + (page.excluded ? ' excluded' : '') + (page.layout === '4koma' ? ' fourkoma' : '')
+      }
+    >
       <PageImage file={page.file} />
       <div class="meta">
-        <span title={page.file} style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        <span
+          title={page.file}
+          style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+        >
           {position + 1}. {page.file}
         </span>
-        <StatusDot status={page.status} />
+        <StatusDot status={effectiveStatus(page)} />
       </div>
       <div class="controls">
         <button class="small" disabled={position === 0} onClick={() => move(page.file, -1)}>
@@ -494,6 +530,20 @@ function PageCard({ page, position, last }: { page: Page; position: number; last
         <button class="small" onClick={() => toggleExcluded(page.file)}>
           {page.excluded ? 'include' : 'exclude'}
         </button>
+        <label
+          class="layout-toggle"
+          title="4-koma pages are translated together, with a prompt that reads each column top to bottom. Shift-click to set every page between this and the last one you clicked."
+        >
+          <input
+            type="checkbox"
+            checked={page.layout === '4koma'}
+            // Shift-click would otherwise also select the text between the two clicks.
+            onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+            // `onClick`, not `onChange`: only the click event carries `shiftKey`.
+            onClick={(e) => onLayoutClick(page.file, e.currentTarget.checked, e.shiftKey)}
+          />
+          4-koma
+        </label>
       </div>
     </div>
   )
@@ -511,6 +561,24 @@ function move(file: string, delta: number): void {
     swapped[to] = pages[at]!
     return { ...project, pages: swapped.map((page, i) => ({ ...page, index: i })) }
   })
+}
+
+/**
+ * Set the layout of several pages in one update, so one autosave covers a whole range.
+ *
+ * Nothing here touches `status`: a translated page whose layout now differs from the one
+ * it was translated under reads as stale through `effectiveStatus`, and reads as translated
+ * again if it is put back. Its lines stay until a retranslation lands, and hand edits
+ * survive under the default `preserve` policy.
+ */
+function setLayouts(files: string[], layout: PageLayout): void {
+  const wanted = new Set(files)
+  updateProject((project) => ({
+    ...project,
+    pages: project.pages.map((p) =>
+      wanted.has(p.file) && p.layout !== layout ? { ...p, layout } : p,
+    ),
+  }))
 }
 
 function toggleExcluded(file: string): void {

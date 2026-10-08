@@ -93,6 +93,13 @@ describe('reconcile', () => {
     expect(project.pages[0]!.hash).toBe('h1')
   })
 
+  it('keeps a 4-koma mark through a rescan, even when the image changed', () => {
+    const p = translated(base(), 'a.jpg')
+    p.pages[0]!.layout = '4koma'
+    const { project } = reconcile(p, disk(['a.jpg', 'DIFFERENT'], ['b.jpg', 'h2'], ['c.jpg', 'h3']))
+    expect(project.pages.map((x) => x.layout)).toEqual(['4koma', 'standard', 'standard'])
+  })
+
   it('does not mutate the project it was given', () => {
     const p = base()
     reconcile(p, disk(['a.jpg', 'CHANGED']))

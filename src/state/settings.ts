@@ -5,7 +5,7 @@
  * in a JSON file that a user might share along with their translated folder.
  */
 
-import { DEFAULT_PROMPT_TEMPLATE } from '../api/prompt'
+import { DEFAULT_4KOMA_PROMPT_TEMPLATE, DEFAULT_PROMPT_TEMPLATE } from '../api/prompt'
 import type { ReadingDirection, SourceLang, TargetLang } from './schema'
 
 /**
@@ -39,6 +39,8 @@ export interface AppSettings {
   /** Longest edge in pixels to rasterize PDF pages at, independent of `maxEdge`. */
   pdfRenderEdge: number
   promptTemplate: string
+  /** Sent in place of `promptTemplate` for pages the user marked as 4-koma. */
+  fourKomaPromptTemplate: string
   /** Request the model's reasoning trace, for the per-call debug view. */
   includeThoughts: boolean
 }
@@ -75,6 +77,7 @@ export function defaultSettings(): AppSettings {
     maxEdge: 1600,
     pdfRenderEdge: 2400,
     promptTemplate: DEFAULT_PROMPT_TEMPLATE,
+    fourKomaPromptTemplate: DEFAULT_4KOMA_PROMPT_TEMPLATE,
     includeThoughts: false,
   }
 }
@@ -122,6 +125,10 @@ export function mergeSettings(base: AppSettings, raw: unknown): AppSettings {
       typeof o['promptTemplate'] === 'string' && o['promptTemplate'].trim() !== ''
         ? o['promptTemplate']
         : base.promptTemplate,
+    fourKomaPromptTemplate:
+      typeof o['fourKomaPromptTemplate'] === 'string' && o['fourKomaPromptTemplate'].trim() !== ''
+        ? o['fourKomaPromptTemplate']
+        : base.fourKomaPromptTemplate,
     includeThoughts: o['includeThoughts'] === true,
   }
 }

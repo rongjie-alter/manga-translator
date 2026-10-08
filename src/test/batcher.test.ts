@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pendingFiles, planBatches, runTranslation, type RunDeps, type RunEvent } from '../api/batcher'
+import { pendingFiles, planBatches, planRun, runTranslation, type RunDeps, type RunEvent } from '../api/batcher'
 import { ApiError, type ChatResult } from '../api/client'
 import { newProjectFile, type ProjectFile } from '../state/schema'
 import type { Endpoint } from '../state/settings'
@@ -298,5 +298,132 @@ describe('runTranslation', () => {
     const h = harness((files) => reply(files))
     await run(p, h)
     expect(h.calls).toEqual([['p2.jpg']])
+  })
+})
+
+describe('4-koma pages', () => {
+  const FOUR_KOMA_TEMPLATE = 'FOUR-KOMA PROMPT'
+  const STANDARD_TEMPLATE = 'STANDARD PROMPT'
+
+  /** p2 and p4 are 4-koma; the rest are standard. */
+  function mixed(batchSize = 2): ProjectFile {
+    const p = project({ batchSize })
+    p.pages[1]!.layout = '4koma'
+    p.pages[3]!.layout = '4koma'
+    return p
+  }
+
+  /** The system prompt of every call, in order. */
+  function withPromptLog(h: Harness): string[] {
+    const prompts: string[] = []
+    const inner = h.deps.chat!
+    h.deps.promptTemplate = STANDARD_TEMPLATE
+    h.deps.fourKomaPromptTemplate = FOUR_KOMA_TEMPLATE
+    h.deps.chat = async (ep, body, signal) => {
+      const messages = body['messages'] as { role: string; content: unknown }[]
+      prompts.push(String(messages.find((m) => m.role === 'system')?.content))
+      return inner(ep, body, signal)
+    }
+    return prompts
+  }
+
+  it('plans homogeneous batches, standard first, keeping reading order within each', () => {
+    const plan = planRun(mixed(), FILES, 2)
+    expect(plan).toEqual([
+      { layout: 'standard', files: ['p1.jpg', 'p3.jpg'] },
+      { layout: 'standard', files: ['p5.jpg'] },
+      { layout: '4koma', files: ['p2.jpg', 'p4.jpg'] },
+    ])
+  })
+
+  it('plans exactly what planBatches would for a project with no 4-koma pages', () => {
+    expect(planRun(project(), FILES, 2).map((b) => b.files)).toEqual(planBatches(FILES, 2))
+  })
+
+  it('sends 4-koma pages together under the 4-koma prompt', async () => {
+    const h = harness((files) => reply(files))
+    const prompts = withPromptLog(h)
+    const summary = await run(mixed(), h)
+
+    expect(h.calls).toEqual([['p1.jpg', 'p3.jpg'], ['p5.jpg'], ['p2.jpg', 'p4.jpg']])
+    expect(prompts).toEqual([
+      STANDARD_TEMPLATE,
+      STANDARD_TEMPLATE,
+      FOUR_KOMA_TEMPLATE,
+    ])
+    expect(summary.translated.sort()).toEqual(FILES)
+  })
+
+  it('falls back to the built-in 4-koma prompt when none is supplied', async () => {
+    const h = harness((files) => reply(files))
+    const prompts = withPromptLog(h)
+    h.deps.fourKomaPromptTemplate = undefined
+    await run(mixed(), h)
+    expect(prompts[2]).toContain('4-KOMA')
+  })
+
+  it('keeps the 4-koma prompt when it re-requests a skipped page', async () => {
+    const p = project({ files: ['p1.jpg', 'p2.jpg'], batchSize: 2 })
+    p.pages[0]!.layout = '4koma'
+    p.pages[1]!.layout = '4koma'
+    const h = harness((files, i) => (i === 0 ? reply(files.slice(0, 1)) : reply(files)))
+    const prompts = withPromptLog(h)
+    await run(p, h)
+
+    expect(h.calls).toEqual([['p1.jpg', 'p2.jpg'], ['p2.jpg']])
+    expect(prompts).toEqual([FOUR_KOMA_TEMPLATE, FOUR_KOMA_TEMPLATE])
+  })
+
+  it('keeps the 4-koma prompt when it splits an oversized batch', async () => {
+    const p = project({ files: ['p1.jpg', 'p2.jpg'], batchSize: 2 })
+    p.pages[0]!.layout = '4koma'
+    p.pages[1]!.layout = '4koma'
+    const h = harness((files, i) => {
+      if (i === 0) throw new ApiError('too big', 'too_large', 413)
+      return reply(files)
+    })
+    const prompts = withPromptLog(h)
+    await run(p, h)
+
+    expect(h.calls).toEqual([['p1.jpg', 'p2.jpg'], ['p1.jpg'], ['p2.jpg']])
+    expect(prompts).toEqual([FOUR_KOMA_TEMPLATE, FOUR_KOMA_TEMPLATE, FOUR_KOMA_TEMPLATE])
+  })
+
+  it('records the layout each page was translated under, so flipping back is not a change', async () => {
+    const h = harness((files) => reply(files))
+    const { project: done } = await run(mixed(), h)
+    expect(done.pages.map((p) => p.translatedLayout)).toEqual([
+      'standard', '4koma', 'standard', '4koma', 'standard',
+    ])
+    expect(pendingFiles(done)).toEqual([])
+
+    const flip = (layout: 'standard' | '4koma') => ({
+      ...done,
+      pages: done.pages.map((p) => (p.file === 'p1.jpg' ? { ...p, layout } : p)),
+    })
+    expect(pendingFiles(flip('4koma'))).toEqual(['p1.jpg'])
+    expect(pendingFiles(flip('standard'))).toEqual([])
+  })
+
+  it('translating a flipped page again moves it to the new layout and clears the staleness', async () => {
+    const h = harness((files) => reply(files))
+    const { project: done } = await run(project({ files: ['p1.jpg'] }), h)
+    const flipped = {
+      ...done,
+      pages: done.pages.map((p) => ({ ...p, layout: '4koma' as const })),
+    }
+    expect(pendingFiles(flipped)).toEqual(['p1.jpg'])
+
+    const again = await run(flipped, h, { files: pendingFiles(flipped) })
+    expect(again.project.pages[0]!.translatedLayout).toBe('4koma')
+    expect(pendingFiles(again.project)).toEqual([])
+  })
+
+  it('groups an explicit file list by layout too, as a single-page retranslate would', async () => {
+    const h = harness((files) => reply(files))
+    const prompts = withPromptLog(h)
+    await run(mixed(), h, { files: ['p2.jpg'] })
+    expect(h.calls).toEqual([['p2.jpg']])
+    expect(prompts).toEqual([FOUR_KOMA_TEMPLATE])
   })
 })

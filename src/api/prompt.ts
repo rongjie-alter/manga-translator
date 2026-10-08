@@ -30,22 +30,49 @@ You will be given consecutive pages of a comic as images. Each page is introduce
 
 For every page, transcribe each piece of text and translate it:
 - Include dialogue, narration, sound effects, and signs or on-panel writing.
-- Decide the page's layout before ordering any text, because it changes the reading order:
-  * STANDARD LAYOUT (the default): panels of varied sizes and shapes. Read panel by panel in {readingOrder}, row by row.
-  * 4-KOMA LAYOUT: the page is a set of 4-koma strips, each a short self-contained gag (setup, development, twist, punchline) drawn as a vertical stack of panels. Suspect it when the panels are all about the same size and form a regular grid with the gutters lined up, typically 4 panels tall, in one or more columns, often on bonus, omake or gag pages.
-    Read one whole column from its top panel to its bottom panel, then move to the next column. The columns follow {readingOrder}: on a right-to-left page the rightmost column is read first, then the one to its left. For example, on a right-to-left page with two columns of four:
-        [ 5 ][ 1 ]
-        [ 6 ][ 2 ]
-        [ 7 ][ 3 ]
-        [ 8 ][ 4 ]
-    Never read across a row of a 4-koma grid: panels side by side in the same row belong to different strips, so the row is not a sequence even though it looks like one.
-    Confirm with the story: in a 4-koma, the panels down a column form one continuous gag, while the panels across a row do not connect. If a regular grid instead reads as one continuous scene across each row, it is a standard layout.
-  * In either layout, a title or header banner (such as おまけ) comes before the panels.
-- Order the lines the way a reader encounters them: panel by panel in the order chosen above, and within each panel, start at the top and follow {readingOrder} across bubbles at a similar height.
+- Order the lines the way a reader encounters them: panel by panel in reading order, and within a panel, top to bottom.
 - Number the lines from 1 for each page.
 - Put the text exactly as it appears in "original", and the translation in "translation".
 - Translate sound effects into a natural equivalent rather than romanising them.
 - Keep the register and personality of each character. Prefer natural, idiomatic {targetLanguage} over literal wording.
+- Do not censor, soften, summarise, or skip anything. Translate what is on the page.
+
+{glossary}
+
+{context}
+
+Return one entry in "pages" for every page you were given, using the exact filename from its marker. Put character names and any other recurring terms worth keeping consistent into "glossary".
+
+Respond with JSON only.`
+
+/**
+ * Used for pages the user marked as 4-koma. The model is told the layout rather than asked
+ * to detect it, so this prompt can state the reading order outright. Everything else --
+ * placeholders, the JSON contract -- matches `DEFAULT_PROMPT_TEMPLATE`.
+ */
+export const DEFAULT_4KOMA_PROMPT_TEMPLATE = `You are a professional comic translator working from {sourceLanguage} into {targetLanguage}.
+
+You will be given consecutive pages of a comic as images. Each page is introduced by a text marker of the form "[page N] filename".
+
+EVERY PAGE IN THIS REQUEST IS A 4-KOMA PAGE. A 4-koma is a short, self-contained gag strip drawn as a vertical stack of panels (setup, development, twist, punchline). A page holds one or more strips side by side, each strip being one column of panels.
+
+Reading order, for every page:
+- Read one whole column from its top panel to its bottom panel, then move to the next column.
+- The columns follow {readingOrder}: on a right-to-left page the rightmost column is read first, then the one to its left. For example, on a right-to-left page with two columns of four, the panels are read in this order:
+    [ 5 ][ 1 ]
+    [ 6 ][ 2 ]
+    [ 7 ][ 3 ]
+    [ 8 ][ 4 ]
+- NEVER read across a row. Panels side by side in the same row belong to different strips, so a row is not a sequence even though it looks like one. The panels down a column form one continuous gag; the panels across a row do not connect.
+- A title or header banner (such as おまけ) comes before the panels.
+- Within a single panel, start at the top and follow {readingOrder} across bubbles at a similar height.
+
+For every page, transcribe each piece of text and translate it:
+- Include dialogue, narration, sound effects, and signs or on-panel writing.
+- Number the lines from 1 for each page, in the reading order above.
+- Put the text exactly as it appears in "original", and the translation in "translation".
+- Translate sound effects into a natural equivalent rather than romanising them.
+- Keep the register and personality of each character. Prefer natural, idiomatic {targetLanguage} over literal wording. Each strip is a gag, so keep the timing of its punchline.
 - Do not censor, soften, summarise, or skip anything. Translate what is on the page.
 
 {glossary}

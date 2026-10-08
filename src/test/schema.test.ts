@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   MigrationError,
   SCHEMA_VERSION,
+  effectiveStatus,
   migrate,
+  newPage,
   newProjectFile,
+  pageNeedsTranslation,
   translatablePages,
+  type Page,
 } from '../state/schema'
 import { serializeProject } from '../fs/project-file'
 
@@ -42,6 +46,45 @@ describe('migrate', () => {
     expect(p.settings.batchSize).toBe(4)
     expect(p.pages).toHaveLength(1)
     expect(p.pages[0]).toMatchObject({ file: 'a.png', index: 0, status: 'pending', excluded: false })
+  })
+
+  it('defaults a page to the standard layout, and keeps a 4-koma mark', () => {
+    expect(sample().pages[0]!.layout).toBe('standard')
+    expect(migrate({ pages: [{ file: 'a.png' }] }).pages[0]!.layout).toBe('standard')
+
+    const project = sample()
+    project.pages[1]!.layout = '4koma'
+    const back = migrate(JSON.parse(serializeProject(project)))
+    expect(back.pages.map((p) => p.layout)).toEqual(['standard', '4koma'])
+  })
+
+  it('falls back to the standard layout for a layout it does not know', () => {
+    expect(migrate({ pages: [{ file: 'a.png', layout: 'webtoon' }] }).pages[0]!.layout).toBe(
+      'standard',
+    )
+  })
+
+  it('assumes a page translated before translatedLayout existed was translated as standard', () => {
+    const p = migrate({
+      pages: [
+        { file: 'a.png', status: 'translated', layout: '4koma', lines: [{ translation: 'hi' }] },
+        { file: 'b.png' },
+      ],
+    })
+    expect(p.pages[0]!.translatedLayout).toBe('standard')
+    // So marking an already-translated page 4-koma queues it again.
+    expect(pageNeedsTranslation(p.pages[0]!)).toBe(true)
+    expect(p.pages[1]!.translatedLayout).toBeNull()
+  })
+
+  it('keeps an explicit translatedLayout, including null', () => {
+    const p = migrate({
+      pages: [
+        { file: 'a.png', status: 'translated', translatedLayout: '4koma', layout: '4koma' },
+        { file: 'b.png', status: 'translated', translatedLayout: null },
+      ],
+    })
+    expect(p.pages.map((x) => x.translatedLayout)).toEqual(['4koma', null])
   })
 
   it('infers translated status from the presence of lines', () => {
@@ -115,6 +158,43 @@ describe('migrate', () => {
     project.project.context = 'Keep honorifics'
 
     expect(migrate(JSON.parse(serializeProject(project)))).toEqual(project)
+  })
+})
+
+describe('effectiveStatus', () => {
+  const translated = (over: Partial<Page> = {}): Page => ({
+    ...newPage('a.png', 0, 'h'),
+    status: 'translated',
+    translatedLayout: 'standard',
+    ...over,
+  })
+
+  it('is stale while the layout differs from the one translated under', () => {
+    const page = translated({ layout: '4koma' })
+    expect(effectiveStatus(page)).toBe('stale')
+    expect(pageNeedsTranslation(page)).toBe(true)
+  })
+
+  it('is translated again once the layout is put back -- nothing changed', () => {
+    const flipped = translated({ layout: '4koma' })
+    const back = { ...flipped, layout: 'standard' as const }
+    expect(effectiveStatus(back)).toBe('translated')
+    expect(pageNeedsTranslation(back)).toBe(false)
+  })
+
+  it('does not call a page stale when the layout it was translated under is unknown', () => {
+    expect(effectiveStatus(translated({ translatedLayout: null, layout: '4koma' }))).toBe('translated')
+  })
+
+  it('leaves a page that is stale for its image stale, whatever the layout does', () => {
+    const imageStale = translated({ status: 'stale' })
+    expect(effectiveStatus(imageStale)).toBe('stale')
+    expect(effectiveStatus({ ...imageStale, layout: '4koma' })).toBe('stale')
+    expect(effectiveStatus({ ...imageStale, layout: 'standard' })).toBe('stale')
+  })
+
+  it('does not touch pages that were never translated', () => {
+    expect(effectiveStatus({ ...newPage('a.png', 0, 'h'), layout: '4koma' })).toBe('pending')
   })
 })
 

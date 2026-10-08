@@ -1,9 +1,11 @@
 import { useState } from 'preact/hooks'
 import {
   CONTEXT_PLACEHOLDER,
+  DEFAULT_4KOMA_PROMPT_TEMPLATE,
   DEFAULT_PROMPT_TEMPLATE,
   PLACEHOLDERS,
   renderPrompt,
+  type PromptContext,
 } from '../api/prompt'
 import {
   SOURCE_LANG_NAMES,
@@ -20,9 +22,7 @@ import { Banner } from './common'
 export function SettingsView() {
   const { settings, project } = useStore()
   const { notes } = useNotes()
-  const [previewing, setPreviewing] = useState(false)
-
-  const preview = renderPrompt(settings.promptTemplate, {
+  const promptContext: PromptContext = {
     meta: project?.project ?? {
       sourceLang: settings.sourceLang,
       targetLang: settings.targetLang,
@@ -30,7 +30,7 @@ export function SettingsView() {
     },
     glossary: project?.glossary ?? [],
     context: project ? resolveContext(project, notes) : '',
-  })
+  }
 
   return (
     <div>
@@ -180,58 +180,88 @@ export function SettingsView() {
         </div>
       </div>
 
-      <div class="card">
-        <h2>System prompt</h2>
-        <p class="muted" style="margin-top:-6px">
-          Placeholders: <span class="mono">{PLACEHOLDERS.join(' ')}</span>
-        </p>
-        <textarea
-          rows={14}
-          value={settings.promptTemplate}
-          onInput={(e) => updateSettings({ promptTemplate: e.currentTarget.value })}
-        />
-        {!settings.promptTemplate.includes(CONTEXT_PLACEHOLDER) && (
-          <Banner kind="warn">
-            This template has no <span class="mono">{CONTEXT_PLACEHOLDER}</span>{' '}
-            placeholder, so the per-project and per-series notes are not being sent. A
-            template that drops a placeholder simply loses that feature -- nothing is
-            added behind your back.{' '}
-            <button
-              class="small"
-              onClick={() =>
-                updateSettings({
-                  promptTemplate:
-                    settings.promptTemplate.trimEnd() + '\n\n' + CONTEXT_PLACEHOLDER,
-                })
-              }
-            >
-              add it
-            </button>
-          </Banner>
-        )}
-        <div class="row" style="margin-top:10px">
-          <button onClick={() => setPreviewing((v) => !v)}>
-            {previewing ? 'Hide' : 'Show'} rendered prompt
-          </button>
-          <button
-            disabled={settings.promptTemplate === DEFAULT_PROMPT_TEMPLATE}
-            onClick={() => updateSettings({ promptTemplate: DEFAULT_PROMPT_TEMPLATE })}
-          >
-            Reset to default
-          </button>
-        </div>
-        {previewing && (
-          <pre class="log" style="margin-top:10px;white-space:pre-wrap">
-            {preview}
-          </pre>
-        )}
-      </div>
+      <PromptEditor
+        title="System prompt"
+        value={settings.promptTemplate}
+        defaultValue={DEFAULT_PROMPT_TEMPLATE}
+        onChange={(promptTemplate) => updateSettings({ promptTemplate })}
+        preview={(template) => renderPrompt(template, promptContext)}
+      />
+
+      <PromptEditor
+        title="4-koma system prompt"
+        description="Used instead of the prompt above for pages you mark as 4-koma on the Pages screen. Those pages are batched together, so this prompt can state the reading order outright."
+        value={settings.fourKomaPromptTemplate}
+        defaultValue={DEFAULT_4KOMA_PROMPT_TEMPLATE}
+        onChange={(fourKomaPromptTemplate) => updateSettings({ fourKomaPromptTemplate })}
+        preview={(template) => renderPrompt(template, promptContext)}
+      />
 
       <Banner kind="info">
         Gemini safety categories are sent as <span class="mono">OFF</span> so that
         pages with adult or violent content are still translated. A refusal is still
         possible; refused pages are marked blocked and can be retried individually.
       </Banner>
+    </div>
+  )
+}
+
+/** One system-prompt template: editor, missing-`{context}` warning, reset and rendered preview. */
+function PromptEditor({
+  title,
+  description,
+  value,
+  defaultValue,
+  onChange,
+  preview,
+}: {
+  title: string
+  description?: string
+  value: string
+  defaultValue: string
+  onChange: (value: string) => void
+  preview: (template: string) => string
+}) {
+  const [previewing, setPreviewing] = useState(false)
+  return (
+    <div class="card">
+      <h2>{title}</h2>
+      {description && (
+        <p class="muted" style="margin-top:-6px">
+          {description}
+        </p>
+      )}
+      <p class="muted" style="margin-top:-6px">
+        Placeholders: <span class="mono">{PLACEHOLDERS.join(' ')}</span>
+      </p>
+      <textarea
+        rows={14}
+        value={value}
+        onInput={(e) => onChange(e.currentTarget.value)}
+      />
+      {!value.includes(CONTEXT_PLACEHOLDER) && (
+        <Banner kind="warn">
+          This template has no <span class="mono">{CONTEXT_PLACEHOLDER}</span> placeholder,
+          so the per-project and per-series notes are not being sent. A template that drops
+          a placeholder simply loses that feature -- nothing is added behind your back.{' '}
+          <button class="small" onClick={() => onChange(value.trimEnd() + '\n\n' + CONTEXT_PLACEHOLDER)}>
+            add it
+          </button>
+        </Banner>
+      )}
+      <div class="row" style="margin-top:10px">
+        <button onClick={() => setPreviewing((v) => !v)}>
+          {previewing ? 'Hide' : 'Show'} rendered prompt
+        </button>
+        <button disabled={value === defaultValue} onClick={() => onChange(defaultValue)}>
+          Reset to default
+        </button>
+      </div>
+      {previewing && (
+        <pre class="log" style="margin-top:10px;white-space:pre-wrap">
+          {preview(value)}
+        </pre>
+      )}
     </div>
   )
 }

@@ -25,6 +25,15 @@ export type PageStatus =
   | 'blocked' // refused by the provider's safety filter
   | 'stale' // translated, but the image on disk changed since
 
+/**
+ * How a page's panels are laid out, which decides the reading order the model is told to
+ * use. Marked by the user rather than detected by the model: small models do not detect
+ * it reliably, and a wrong guess silently scrambles the order of every line on the page.
+ */
+export type PageLayout = 'standard' | '4koma'
+
+export const PAGE_LAYOUTS: readonly PageLayout[] = ['standard', '4koma']
+
 export type LineKind = 'dialogue' | 'narration' | 'sfx' | 'sign'
 
 export const LINE_KINDS: readonly LineKind[] = ['dialogue', 'narration', 'sfx', 'sign']
@@ -67,6 +76,14 @@ export interface Page {
   /** Reading position. Contiguous from 0, including excluded pages. */
   index: number
   excluded: boolean
+  /** Pages of one layout are batched together and sent with that layout's prompt. */
+  layout: PageLayout
+  /**
+   * The layout the current translation was produced under; null if never translated, or
+   * if that is unknown. Kept separately from `layout` so that a page flipped to 4-koma and
+   * back is recognised as unchanged rather than needing a retranslation. See `effectiveStatus`.
+   */
+  translatedLayout: PageLayout | null
   /** Content hash of the image, so edits on disk can be detected. */
   hash: string
   status: PageStatus
@@ -130,7 +147,17 @@ export function emptyUsage(): Usage {
 }
 
 export function newPage(file: string, index: number, hash: string): Page {
-  return { file, index, excluded: false, hash, status: 'pending', lines: [], lastRun: null }
+  return {
+    file,
+    index,
+    excluded: false,
+    layout: 'standard',
+    translatedLayout: null,
+    hash,
+    status: 'pending',
+    lines: [],
+    lastRun: null,
+  }
 }
 
 export function newProjectFile(
@@ -174,8 +201,28 @@ export function orderedPages(p: ProjectFile): Page[] {
   return p.pages.slice().sort((a, b) => a.index - b.index)
 }
 
+/**
+ * What to show and act on, as opposed to what is stored.
+ *
+ * A translated page whose layout no longer matches the one it was translated under is
+ * stale -- its lines were ordered for the wrong layout. That is derived here rather than
+ * written into `status`, so flipping the layout back un-stales the page with nothing to
+ * remember, and cannot be confused with a page that is stale because its image changed.
+ */
+export function effectiveStatus(page: Page): PageStatus {
+  if (
+    page.status === 'translated' &&
+    page.translatedLayout !== null &&
+    page.translatedLayout !== page.layout
+  ) {
+    return 'stale'
+  }
+  return page.status
+}
+
 export function pageNeedsTranslation(page: Page): boolean {
-  return page.status === 'pending' || page.status === 'failed' || page.status === 'stale'
+  const status = effectiveStatus(page)
+  return status === 'pending' || status === 'failed' || status === 'stale'
 }
 
 export class MigrationError extends Error {}
@@ -244,16 +291,30 @@ export function migrate(raw: unknown): ProjectFile {
 function migratePage(raw: unknown, i: number): Page {
   const o = asRecord(raw)
   const lines = arr(o['lines']).map(migrateLine)
+  const status = oneOf(
+    o['status'],
+    ['pending', 'translated', 'failed', 'blocked', 'stale'] as const,
+    lines.length > 0 ? 'translated' : 'pending',
+  )
+  // A file from before this field existed was translated by the standard prompt, whatever
+  // `layout` says now -- that is what lets a project translated earlier be re-marked 4-koma
+  // and picked up again. An explicit null is "unknown" and is kept as written.
+  const translatedLayout =
+    o['translatedLayout'] === null
+      ? null
+      : (PAGE_LAYOUTS as readonly unknown[]).includes(o['translatedLayout'])
+        ? (o['translatedLayout'] as PageLayout)
+        : status === 'translated' || status === 'stale'
+          ? 'standard'
+          : null
   return {
     file: str(o['file'], ''),
     index: clampInt(o['index'], 0, Number.MAX_SAFE_INTEGER, i),
     excluded: o['excluded'] === true,
+    layout: oneOf(o['layout'], PAGE_LAYOUTS, 'standard'),
+    translatedLayout,
     hash: str(o['hash'], ''),
-    status: oneOf(
-      o['status'],
-      ['pending', 'translated', 'failed', 'blocked', 'stale'],
-      lines.length > 0 ? 'translated' : 'pending',
-    ),
+    status,
     lines,
     lastRun: migrateRun(o['lastRun']),
   }

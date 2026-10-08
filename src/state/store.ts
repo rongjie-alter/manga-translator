@@ -418,6 +418,7 @@ export async function startRun(opts: StartRunOptions = {}): Promise<void> {
   const deps: RunDeps = {
     endpoint,
     promptTemplate: settings.promptTemplate,
+    fourKomaPromptTemplate: settings.fourKomaPromptTemplate,
     context: resolveContext(project, getNotes()),
     includeThoughts: settings.includeThoughts,
     maxEdge: settings.maxEdge,

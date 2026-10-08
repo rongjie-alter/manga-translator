@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'preact/hooks'
 import { navigate } from '../app'
-import { pendingFiles } from '../api/batcher'
-import { dailyCapFor, estimateRun, formatTokens, type Estimate } from '../api/estimate'
+import { pendingFiles, planRun } from '../api/batcher'
+import {
+  dailyCapFor,
+  estimateRun,
+  formatTokens,
+  sumEstimates,
+  type Estimate,
+} from '../api/estimate'
 import { CONTEXT_PLACEHOLDER, renderPrompt } from '../api/prompt'
 import { downloadProjectJson } from '../fs/export'
 import type { Dimensions } from '../fs/images'
@@ -10,6 +16,7 @@ import { createSeries, findSeries, resolveContext, sortedSeries, useNotes } from
 import {
   SOURCE_LANG_NAMES,
   TARGET_LANG_NAMES,
+  effectiveStatus,
   translatablePages,
   type ProjectFile,
   type ReadingDirection,
@@ -52,18 +59,27 @@ export function TranslateView() {
   if (!project || !source) return null
 
   const counts = countByStatus(project.pages)
-  const systemPrompt = renderPrompt(settings.promptTemplate, {
-    meta: project.project,
-    glossary: project.glossary,
-    context: resolveContext(project, notes),
-  })
-  const estimate = estimateRun({
-    pageCount: files.length,
-    sampled,
-    maxEdge: settings.maxEdge,
-    batchSize: project.settings.batchSize,
-    systemPrompt,
-  })
+  // Each layout is sent with its own system prompt, so it is estimated on its own and the
+  // parts summed. Going through `planRun` keeps the call count what the run will make.
+  const context = resolveContext(project, notes)
+  const planned = planRun(project, files, project.settings.batchSize)
+  const estimate = sumEstimates(
+    (['standard', '4koma'] as const).map((layout) =>
+      estimateRun({
+        pageCount: planned
+          .filter((b) => b.layout === layout)
+          .reduce((n, b) => n + b.files.length, 0),
+        sampled,
+        maxEdge: settings.maxEdge,
+        batchSize: project.settings.batchSize,
+        systemPrompt: renderPrompt(
+          layout === '4koma' ? settings.fourKomaPromptTemplate : settings.promptTemplate,
+          { meta: project.project, glossary: project.glossary, context },
+        ),
+      }),
+    ),
+  )
+  const fourKomaCount = project.pages.filter((p) => !p.excluded && p.layout === '4koma').length
   const cap = endpoint ? dailyCapFor(endpoint.model) : null
   const progress = run.batches > 0 ? run.batch / run.batches : 0
 
@@ -73,6 +89,7 @@ export function TranslateView() {
       <p class="sub">
         {files.length} of {translatablePages(project).length} included pages still need
         translating.
+        {fourKomaCount > 0 && ` ${fourKomaCount} marked 4-koma, sent separately with the 4-koma prompt.`}
       </p>
 
       {!endpoint && <Banner kind="error">No endpoint configured. Add one in Settings.</Banner>}
@@ -243,8 +260,8 @@ export function TranslateView() {
           {translatablePages(project).map((page, i) => (
             <span
               key={page.file}
-              class={'cell ' + page.status + (run.current.includes(page.file) ? ' active' : '')}
-              title={page.file + ' — ' + STATUS_LABEL[page.status] + (page.lastRun?.error ? ': ' + page.lastRun.error : '')}
+              class={'cell ' + effectiveStatus(page) + (run.current.includes(page.file) ? ' active' : '')}
+              title={page.file + ' — ' + STATUS_LABEL[effectiveStatus(page)] + (page.lastRun?.error ? ': ' + page.lastRun.error : '')}
             >
               {i + 1}
             </span>
@@ -282,7 +299,10 @@ function SeriesContextCard({ project }: { project: ProjectFile }) {
   const { settings } = useStore()
   const { notes, loaded } = useNotes()
   const series = findSeries(notes, project.project.seriesId)
-  const templateTakesContext = settings.promptTemplate.includes(CONTEXT_PLACEHOLDER)
+  const usesFourKoma = project.pages.some((p) => !p.excluded && p.layout === '4koma')
+  const templateTakesContext =
+    settings.promptTemplate.includes(CONTEXT_PLACEHOLDER) &&
+    (!usesFourKoma || settings.fourKomaPromptTemplate.includes(CONTEXT_PLACEHOLDER))
 
   const assign = (value: string): void => {
     if (value === NEW_SERIES) {

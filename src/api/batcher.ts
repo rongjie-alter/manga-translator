@@ -17,6 +17,7 @@ import {
   translatablePages,
   type GlossaryEntry,
   type Page,
+  type PageLayout,
   type ProjectFile,
   type RunInfo,
 } from '../state/schema'
@@ -25,7 +26,7 @@ import { ApiError, chat as defaultChat, withRetry, type ChatResult } from './cli
 import type { ModelPage } from './contract'
 import { mergeGlossary, mergeLines, type EditPolicy } from './merge'
 import { parseResponse } from './parse'
-import { renderPrompt } from './prompt'
+import { DEFAULT_4KOMA_PROMPT_TEMPLATE, renderPrompt } from './prompt'
 import { buildRequestBody, requestSizeBytes } from './request'
 
 /**
@@ -52,6 +53,8 @@ export interface CallUsage {
 export interface RunDeps {
   endpoint: Endpoint
   promptTemplate: string
+  /** For pages marked 4-koma. Defaults to `DEFAULT_4KOMA_PROMPT_TEMPLATE`. */
+  fourKomaPromptTemplate?: string
   /** Series and project instructions, already composed. See `state/notes.ts`. */
   context: string
   includeThoughts: boolean
@@ -97,6 +100,27 @@ export function planBatches<T>(items: T[], batchSize: number): T[][] {
   return out
 }
 
+export interface PlannedBatch {
+  layout: PageLayout
+  files: string[]
+}
+
+/**
+ * Split files into calls, never mixing page layouts: each layout is sent with its own
+ * system prompt, so a batch has to be homogeneous. Standard pages go first, then 4-koma;
+ * reading order is kept within each group. Pure, like `planBatches`, so the estimate and
+ * the run agree on the call count.
+ */
+export function planRun(project: ProjectFile, files: string[], batchSize: number): PlannedBatch[] {
+  const layoutOf = new Map(project.pages.map((p) => [p.file, p.layout]))
+  const out: PlannedBatch[] = []
+  for (const layout of ['standard', '4koma'] as const) {
+    const group = files.filter((file) => (layoutOf.get(file) ?? 'standard') === layout)
+    for (const batch of planBatches(group, batchSize)) out.push({ layout, files: batch })
+  }
+  return out
+}
+
 /** Files the run would translate, in reading order. */
 export function pendingFiles(project: ProjectFile): string[] {
   return translatablePages(project).filter(pageNeedsTranslation).map((p) => p.file)
@@ -112,7 +136,7 @@ export async function runTranslation(
 
   let project = initial
   const targets = opts.files ?? pendingFiles(project)
-  const batches = planBatches(targets, project.settings.batchSize)
+  const batches = planRun(project, targets, project.settings.batchSize)
 
   const summary: RunSummary = {
     project,
@@ -123,7 +147,7 @@ export async function runTranslation(
     cancelled: false,
   }
 
-  for (const [index, batch] of batches.entries()) {
+  for (const [index, { layout, files: batch }] of batches.entries()) {
     if (opts.signal?.aborted) {
       summary.cancelled = true
       break
@@ -135,7 +159,7 @@ export async function runTranslation(
     const batchUsage: CallUsage = { calls: 0, promptTokens: 0, completionTokens: 0 }
     // The glossary grows as the run goes, so it is read fresh for every call rather
     // than captured once at the start.
-    const outcome = await translateBatch(batch, project, deps, opts, emit, batchUsage)
+    const outcome = await translateBatch(batch, layout, project, deps, opts, emit, batchUsage)
 
     addUsage(summary.usage, batchUsage)
 
@@ -146,7 +170,7 @@ export async function runTranslation(
       break
     }
 
-    project = applyOutcome(project, batch, outcome, editPolicy, batchUsage, summary, emit)
+    project = applyOutcome(project, batch, layout, outcome, editPolicy, batchUsage, summary, emit)
 
     if (opts.save) {
       await opts.save(project)
@@ -184,6 +208,7 @@ const emptyOutcome = (): BatchOutcome => ({
  */
 async function translateBatch(
   files: string[],
+  layout: PageLayout,
   project: ProjectFile,
   deps: RunDeps,
   opts: RunOptions,
@@ -192,7 +217,11 @@ async function translateBatch(
   isRepair = false,
 ): Promise<BatchOutcome> {
   const call = deps.chat ?? defaultChat
-  const systemPrompt = renderPrompt(deps.promptTemplate, {
+  const template =
+    layout === '4koma'
+      ? (deps.fourKomaPromptTemplate ?? DEFAULT_4KOMA_PROMPT_TEMPLATE)
+      : deps.promptTemplate
+  const systemPrompt = renderPrompt(template, {
     meta: project.project,
     glossary: project.glossary,
     context: deps.context,
@@ -214,7 +243,7 @@ async function translateBatch(
 
   if (requestSizeBytes(body) > MAX_REQUEST_BYTES && files.length > 1) {
     emit({ type: 'repair', files, reason: 'oversize' })
-    return splitAndTranslate(files, project, deps, opts, emit, usage, isRepair)
+    return splitAndTranslate(files, layout, project, deps, opts, emit, usage, isRepair)
   }
 
   let result: ChatResult
@@ -237,7 +266,7 @@ async function translateBatch(
     }
     if (err instanceof ApiError && err.kind === 'too_large' && files.length > 1) {
       emit({ type: 'repair', files, reason: 'oversize' })
-      return splitAndTranslate(files, project, deps, opts, emit, usage, isRepair)
+      return splitAndTranslate(files, layout, project, deps, opts, emit, usage, isRepair)
     }
     outcome.error = err instanceof Error ? err.message : String(err)
     return outcome
@@ -270,7 +299,7 @@ async function translateBatch(
   const missing = files.filter((file) => !matchPage(parsed.pages, file, files))
   if (missing.length > 0 && !isRepair && !opts.signal?.aborted) {
     emit({ type: 'repair', files: missing, reason: 'missing' })
-    const repair = await translateBatch(missing, project, deps, opts, emit, usage, true)
+    const repair = await translateBatch(missing, layout, project, deps, opts, emit, usage, true)
     outcome.pages = outcome.pages.concat(repair.pages)
     outcome.glossary = outcome.glossary.concat(repair.glossary)
     outcome.cancelled = repair.cancelled
@@ -284,6 +313,7 @@ async function translateBatch(
 
 async function splitAndTranslate(
   files: string[],
+  layout: PageLayout,
   project: ProjectFile,
   deps: RunDeps,
   opts: RunOptions,
@@ -292,9 +322,9 @@ async function splitAndTranslate(
   isRepair: boolean,
 ): Promise<BatchOutcome> {
   const mid = Math.ceil(files.length / 2)
-  const left = await translateBatch(files.slice(0, mid), project, deps, opts, emit, usage, isRepair)
+  const left = await translateBatch(files.slice(0, mid), layout, project, deps, opts, emit, usage, isRepair)
   if (left.cancelled) return left
-  const right = await translateBatch(files.slice(mid), project, deps, opts, emit, usage, isRepair)
+  const right = await translateBatch(files.slice(mid), layout, project, deps, opts, emit, usage, isRepair)
   return {
     pages: left.pages.concat(right.pages),
     glossary: left.glossary.concat(right.glossary),
@@ -328,6 +358,7 @@ function addUsage(target: CallUsage, delta: CallUsage): void {
 function applyOutcome(
   project: ProjectFile,
   batch: string[],
+  layout: PageLayout,
   outcome: BatchOutcome,
   editPolicy: EditPolicy,
   batchUsage: CallUsage,
@@ -356,7 +387,15 @@ function applyOutcome(
 
     translated.push(page.file)
     const merged = mergeLines(page.lines, model.lines, editPolicy)
-    return { ...page, status: 'translated', lines: merged.lines, lastRun: { ...outcome.runInfo, error: null } }
+    return {
+      ...page,
+      status: 'translated',
+      // What the batch was sent as, not what the page says now: the user may have flipped
+      // it while the call was in flight, and then it is stale and should read as such.
+      translatedLayout: layout,
+      lines: merged.lines,
+      lastRun: { ...outcome.runInfo, error: null },
+    }
   })
 
   if (blocked.length > 0) {

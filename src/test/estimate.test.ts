@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dailyCapFor, estimateRun, formatTokens } from '../api/estimate'
+import { dailyCapFor, estimateRun, formatTokens, sumEstimates } from '../api/estimate'
 import { fitWithin, imageTokens } from '../fs/images'
 import {
   DEFAULT_PROMPT_TEMPLATE,
@@ -69,6 +69,30 @@ describe('estimateRun', () => {
 
   it('is zero for an empty run', () => {
     expect(estimateRun({ ...base, pageCount: 0 })).toMatchObject({ calls: 0, totalTokens: 0 })
+  })
+})
+
+describe('sumEstimates', () => {
+  const part = { sampled: [PAGE], maxEdge: 1600, batchSize: 4, systemPrompt: DEFAULT_PROMPT_TEMPLATE }
+
+  it('adds calls and tokens across layouts', () => {
+    const a = estimateRun({ ...part, pageCount: 9 })
+    const b = estimateRun({ ...part, pageCount: 3 })
+    const sum = sumEstimates([a, b])
+    expect(sum.calls).toBe(a.calls + b.calls)
+    expect(sum.promptTokens).toBe(a.promptTokens + b.promptTokens)
+    expect(sum.totalTokens).toBe(a.totalTokens + b.totalTokens)
+  })
+
+  it('ignores a part with no pages, but still reports the image cost of the other', () => {
+    const real = estimateRun({ ...part, pageCount: 5 })
+    const sum = sumEstimates([estimateRun({ ...part, pageCount: 0 }), real])
+    expect(sum.calls).toBe(real.calls)
+    expect(sum.imageTokensPerPage).toBe(real.imageTokensPerPage)
+  })
+
+  it('is zero for nothing to sum', () => {
+    expect(sumEstimates([])).toMatchObject({ calls: 0, totalTokens: 0 })
   })
 })
 

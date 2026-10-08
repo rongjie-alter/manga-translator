@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { orderedPages, type Line, type Page } from '../state/schema'
+import { effectiveStatus, orderedPages, type Line, type Page } from '../state/schema'
 import { useStore } from '../state/store'
 import { PageImage, STATUS_LABEL } from './common'
 
@@ -138,7 +138,7 @@ function Spread({
         </div>
         {page.lines.length === 0 ? (
           <p class="muted">
-            {page.excluded ? 'excluded from translation' : (page.lastRun?.error ?? STATUS_LABEL[page.status])}
+            {page.excluded ? 'excluded from translation' : (page.lastRun?.error ?? STATUS_LABEL[effectiveStatus(page)])}
           </p>
         ) : (
           <ol>
