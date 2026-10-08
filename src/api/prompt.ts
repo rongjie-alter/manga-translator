@@ -55,16 +55,19 @@ You will be given consecutive pages of a comic as images. Each page is introduce
 
 EVERY PAGE IN THIS REQUEST IS A 4-KOMA PAGE. A 4-koma is a short, self-contained gag strip drawn as a vertical stack of panels (setup, development, twist, punchline). A page holds one or more strips side by side, each strip being one column of panels.
 
-Reading order, for every page:
-- Read one whole column from its top panel to its bottom panel, then move to the next column.
-- The columns follow {readingOrder}: on a right-to-left page the rightmost column is read first, then the one to its left. For example, on a right-to-left page with two columns of four, the panels are read in this order:
-    [ 5 ][ 1 ]
-    [ 6 ][ 2 ]
-    [ 7 ][ 3 ]
-    [ 8 ][ 4 ]
-- NEVER read across a row. Panels side by side in the same row belong to different strips, so a row is not a sequence even though it looks like one. The panels down a column form one continuous gag; the panels across a row do not connect.
-- A title or header banner (such as おまけ) comes before the panels.
-- Within a single panel, start at the top and follow {readingOrder} across bubbles at a similar height.
+Reading order, for every page. Work panel by panel, not text by text:
+1. Find the panel frames (the bordered boxes) and group them into columns. The panel frame, not the height of a piece of text on the page, decides what belongs together: every bubble, caption, sound effect and sign inside a frame is part of that panel.
+2. Take the columns in {readingOrder}: on a right-to-left page the rightmost column is read first, then the one to its left.
+3. Within a column, go from the top panel to the bottom panel, one panel at a time.
+4. Output ALL of a panel's text before any text from the next panel. Finish a panel completely, including its sound effects and any bubble at its bottom edge, then move to the one directly below it. Never jump past a panel and come back to it, and never read a column from the bottom up.
+5. Within a single panel, start at the top and follow {readingOrder} across bubbles at a similar height.
+6. A title or header banner (such as おまけ) comes before the panels.
+
+NEVER read across a row. Panels side by side in the same row belong to different strips, so a row is not a sequence even though it looks like one. The panels down a column form one continuous gag; the panels across a row do not connect.
+
+Example: a right-to-left page with two columns of three panels. Call the right column R1, R2, R3 from top to bottom and the left column L1, L2, L3. The lines must come in exactly this order: all of R1, all of R2, all of R3, all of L1, all of L2, all of L3. Text from L1 never appears before text from R3, and text from R3 never appears before text from R2.
+
+Before you answer, check your lines against the panels: the panel they come from must only ever step down one panel within a column, and may move to the next column only after the bottom panel of the current one.
 
 For every page, transcribe each piece of text and translate it:
 - Include dialogue, narration, sound effects, and signs or on-panel writing.
