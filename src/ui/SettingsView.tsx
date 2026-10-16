@@ -219,6 +219,12 @@ function PromptEditor({
       <p class="muted" style="margin-top:-6px">
         Placeholders: <span class="mono">{PLACEHOLDERS.join(' ')}</span>
       </p>
+      <Banner kind="info">
+        Edits to the system prompt only persist for the current browser session for experimentation
+        and will reset to the latest version on page reload. Put story-specific instructions in{' '}
+        <strong>Additional context</strong> (on the Translate screen) instead. If you find an issue
+        or bug with the default prompt, please report it to the developer.
+      </Banner>
       <textarea
         rows={14}
         value={value}

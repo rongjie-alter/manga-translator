@@ -73,10 +73,11 @@ explicit user action — a one-shot comic must not silently fill the series up. 
 carries `seriesId` plus a denormalised `seriesName`, so a project opened on a machine
 without the notes store can say which series it wants rather than showing a bare UUID.
 
-App-level config (API keys, endpoints, prompt template, defaults) lives in
+App-level config (API keys, endpoints, defaults) lives in
 `state/settings.ts` and is persisted to `localStorage`, separately from the project
 JSON — an API key must never end up in a file a user might share alongside their
-translated folder.
+translated folder. System prompt edits are kept in memory for the current session
+only (for experimentation) and reset to the built-in defaults on reload.
 
 ### Filesystem seam: `fs/source.ts`
 

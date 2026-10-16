@@ -3,6 +3,8 @@
  *
  * Kept in localStorage rather than the project file, because the API key must not end up
  * in a JSON file that a user might share along with their translated folder.
+ * System prompt edits are kept in memory for the current session only (for experimentation)
+ * and reset to the built-in defaults on reload.
  */
 
 import { DEFAULT_4KOMA_PROMPT_TEMPLATE, DEFAULT_PROMPT_TEMPLATE } from '../api/prompt'
@@ -48,8 +50,9 @@ export interface AppSettings {
   maxEdge: number
   /** Longest edge in pixels to rasterize PDF pages at, independent of `maxEdge`. */
   pdfRenderEdge: number
+  /** Session-only for user experimentation; resets to DEFAULT_PROMPT_TEMPLATE on reload. */
   promptTemplate: string
-  /** Sent in place of `promptTemplate` for pages the user marked as 4-koma. */
+  /** Sent in place of `promptTemplate` for pages the user marked as 4-koma; session-only. */
   fourKomaPromptTemplate: string
   /** Request the model's reasoning trace, for the per-call debug view. */
   includeThoughts: boolean
@@ -94,7 +97,7 @@ export function defaultSettings(): AppSettings {
   }
 }
 
-const STORAGE_KEY = 'comic-translator:settings'
+export const STORAGE_KEY = 'comic-translator:settings'
 
 export function loadSettings(): AppSettings {
   const fallback = defaultSettings()
@@ -109,7 +112,9 @@ export function loadSettings(): AppSettings {
 
 export function saveSettings(settings: AppSettings): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    // System prompt templates are session-only for experimentation; do not persist to localStorage.
+    const { promptTemplate: _p, fourKomaPromptTemplate: _f, ...persistable } = settings
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistable))
   } catch {
     // A full or disabled localStorage should not take the app down; the user just
     // has to re-enter settings next session.
@@ -135,14 +140,10 @@ export function mergeSettings(base: AppSettings, raw: unknown): AppSettings {
     batchSize: int(o['batchSize'], 1, 20, base.batchSize),
     maxEdge: int(o['maxEdge'], 512, 4096, base.maxEdge),
     pdfRenderEdge: int(o['pdfRenderEdge'], 800, 4096, base.pdfRenderEdge),
-    promptTemplate:
-      typeof o['promptTemplate'] === 'string' && o['promptTemplate'].trim() !== ''
-        ? o['promptTemplate']
-        : base.promptTemplate,
-    fourKomaPromptTemplate:
-      typeof o['fourKomaPromptTemplate'] === 'string' && o['fourKomaPromptTemplate'].trim() !== ''
-        ? o['fourKomaPromptTemplate']
-        : base.fourKomaPromptTemplate,
+    // System prompt templates are session-only for experimentation and always reset
+    // to the latest default versions on reload.
+    promptTemplate: base.promptTemplate,
+    fourKomaPromptTemplate: base.fourKomaPromptTemplate,
     includeThoughts: o['includeThoughts'] === true,
   }
 }

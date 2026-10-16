@@ -1,25 +1,48 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_4KOMA_PROMPT_TEMPLATE } from '../api/prompt'
+import { DEFAULT_4KOMA_PROMPT_TEMPLATE, DEFAULT_PROMPT_TEMPLATE } from '../api/prompt'
 import { pushRecent } from '../state/schema'
-import { defaultSettings, mergeSettings } from '../state/settings'
+import {
+  defaultSettings,
+  loadSettings,
+  mergeSettings,
+  saveSettings,
+  STORAGE_KEY,
+} from '../state/settings'
 
-describe('mergeSettings: 4-koma prompt', () => {
-  it('gives a blob saved before the 4-koma prompt existed the default one', () => {
-    const merged = mergeSettings(defaultSettings(), { promptTemplate: 'my own prompt {context}' })
-    expect(merged.promptTemplate).toBe('my own prompt {context}')
+describe('mergeSettings: system prompts are session-only', () => {
+  it('always resets promptTemplate and fourKomaPromptTemplate to defaults', () => {
+    const merged = mergeSettings(defaultSettings(), {
+      promptTemplate: 'custom prompt {context}',
+      fourKomaPromptTemplate: 'custom 4-koma {context}',
+    })
+    expect(merged.promptTemplate).toBe(DEFAULT_PROMPT_TEMPLATE)
     expect(merged.fourKomaPromptTemplate).toBe(DEFAULT_4KOMA_PROMPT_TEMPLATE)
   })
 
-  it('keeps an edited 4-koma prompt', () => {
-    const merged = mergeSettings(defaultSettings(), { fourKomaPromptTemplate: 'columns {context}' })
-    expect(merged.fourKomaPromptTemplate).toBe('columns {context}')
+  it('saveSettings strips promptTemplate and fourKomaPromptTemplate from localStorage', () => {
+    const settings = {
+      ...defaultSettings(),
+      promptTemplate: 'session edit {context}',
+      fourKomaPromptTemplate: 'session 4koma {context}',
+    }
+    saveSettings(settings)
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    expect(stored.promptTemplate).toBeUndefined()
+    expect(stored.fourKomaPromptTemplate).toBeUndefined()
   })
 
-  it('falls back to the default for an empty or non-string 4-koma prompt', () => {
-    for (const junk of ['', '   \n', 7, null]) {
-      const merged = mergeSettings(defaultSettings(), { fourKomaPromptTemplate: junk })
-      expect(merged.fourKomaPromptTemplate).toBe(DEFAULT_4KOMA_PROMPT_TEMPLATE)
-    }
+  it('loadSettings resets prompt templates to latest defaults even if localStorage has legacy values', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...defaultSettings(),
+        promptTemplate: 'legacy prompt {context}',
+        fourKomaPromptTemplate: 'legacy 4koma {context}',
+      }),
+    )
+    const loaded = loadSettings()
+    expect(loaded.promptTemplate).toBe(DEFAULT_PROMPT_TEMPLATE)
+    expect(loaded.fourKomaPromptTemplate).toBe(DEFAULT_4KOMA_PROMPT_TEMPLATE)
   })
 })
 
