@@ -4,3 +4,4 @@ node_modules/
 *.pdf
 *.pyc
 __pycache__/
+.DS_Store
