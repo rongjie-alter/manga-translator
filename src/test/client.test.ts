@@ -41,7 +41,7 @@ describe('withRetry', () => {
     await withRetry(fail(new ApiError('quota', 'rate_limit', 429, null), 3), {
       sleep: r.sleep,
     }).catch(() => undefined)
-    expect(r.delays).toEqual([20_000, 40_000])
+    expect(r.delays).toEqual([30_000, 60_000])
   })
 
   it('waits patiently on a server error, not the fast network-blip curve', async () => {
@@ -53,7 +53,7 @@ describe('withRetry', () => {
       sleep: r.sleep,
       baseDelayMs: 1000,
     })
-    expect(r.delays).toEqual([5000, 10_000])
+    expect(r.delays).toEqual([30_000, 60_000])
   })
 
   it('honors an explicit serverErrorDelayMs override', async () => {

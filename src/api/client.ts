@@ -227,7 +227,7 @@ function num(v: unknown): number {
  * three times in four seconds just burns the attempt budget and fails the page --
  * so rate limits get their own, much more patient curve.
  */
-const RATE_LIMIT_BASE_DELAY_MS = 20_000
+const RATE_LIMIT_BASE_DELAY_MS = 30_000
 
 /**
  * How long to wait after a 5xx with no usable `Retry-After`.
@@ -235,9 +235,9 @@ const RATE_LIMIT_BASE_DELAY_MS = 20_000
  * A "high demand" / overloaded-model response does not clear in a second either --
  * retrying on the same ~1s curve used for a one-off network blip just re-hits the
  * same overloaded model three times in quick succession and burns the attempt budget
- * for nothing. Patient, but not as patient as a rate limit's per-minute quota.
+ * for nothing.
  */
-const SERVER_ERROR_BASE_DELAY_MS = 5_000
+const SERVER_ERROR_BASE_DELAY_MS = 30_000
 
 export interface RetryOptions {
   /** Total attempts, including the first. */
